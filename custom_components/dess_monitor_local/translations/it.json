@@ -1,0 +1,207 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]",
+      "name_required": "Inserisci un nome",
+      "host_required": "Host/IP è obbligatorio per questo trasporto",
+      "serial_required": "Scegli o inserisci una porta seriale",
+      "agent_device_id_required": "L'ID dispositivo del provider è obbligatorio per l'agent locale"
+    },
+    "step": {
+      "user": {
+        "title": "Aggiungi DESS Monitor Local",
+        "description": "Aggiungi un singolo inverter, oppure un hub EyBond che rileva da solo più dongle Wi-Fi su una sola porta.",
+        "menu_options": {
+          "device": "Inverter singolo",
+          "hub": "Hub EyBond (rileva più dongle automaticamente)"
+        }
+      },
+      "device": {
+        "title": "Aggiungi inverter",
+        "description": "Dai un nome a questo inverter. Protocollo, trasporto e indirizzo si scelgono nei passaggi successivi.",
+        "data": {
+          "name": "Nome"
+        }
+      },
+      "hub": {
+        "title": "Aggiungi hub EyBond",
+        "description": "Un solo listener TCP accetta più dongle EyBond, rilevati automaticamente dal numero di serie (PN). Dopo la configurazione, apri le opzioni dell'hub per assegnare un protocollo a ogni dongle rilevato.",
+        "data": {
+          "name": "Nome",
+          "host": "Interfaccia di ascolto",
+          "port": "Porta di ascolto",
+          "eybond_broadcast": "Indirizzo di broadcast",
+          "eybond_announce_ip": "IP da annunciare",
+          "update_interval": "Intervallo di aggiornamento (secondi)"
+        },
+        "data_description": {
+          "host": "Interfaccia locale su cui mettere in ascolto il listener TCP (di solito 0.0.0.0).",
+          "port": "Porta TCP a cui si connettono i dongle (predefinita 8899).",
+          "eybond_broadcast": "Destinazione del broadcast UDP con cui il server locale si annuncia ai dongle.",
+          "eybond_announce_ip": "IP comunicato ai dongle. Lascia vuoto per il rilevamento automatico; in Docker con rete bridge indica l'IP LAN dell'host.",
+          "update_interval": "Ogni quanto interrogare ciascun inverter figlio abilitato."
+        }
+      },
+      "protocol": {
+        "title": "Scegli il protocollo",
+        "description": "Scegli il protocollo di comandi e dati parlato dall'inverter o dalla sorgente dati locale.",
+        "data": {
+          "protocol": "Protocollo"
+        }
+      },
+      "transport": {
+        "title": "Scegli il trasporto",
+        "description": "Protocollo: {protocol}. Scegli come Home Assistant lo raggiunge.",
+        "data": {
+          "transport": "Trasporto"
+        }
+      },
+      "connection": {
+        "title": "Impostazioni di connessione",
+        "description": "Protocollo: {protocol}. Trasporto: {transport}. Inserisci l'indirizzo di connessione e ogni quanto Home Assistant deve interrogare il dispositivo.",
+        "data": {
+          "host": "Host / indirizzo IP",
+          "port": "Porta",
+          "serial_device": "Porta seriale",
+          "agent_device_id": "ID dispositivo del provider",
+          "eybond_devaddr": "Indirizzo dispositivo RS485",
+          "eybond_broadcast": "Indirizzo di broadcast",
+          "eybond_announce_ip": "IP da annunciare",
+          "update_interval": "Intervallo di aggiornamento (secondi)",
+          "strict_crc": "Validazione CRC rigorosa"
+        },
+        "data_description": {
+          "host": "Nome host o indirizzo IP dell'inverter, del gateway, dell'agent, oppure interfaccia locale di ascolto per EyBond.",
+          "port": "Porta TCP. Valori predefiniti: 8899 per TCP/Modbus/EyBond diretti, 8787 per l'agent locale.",
+          "serial_device": "Percorso del dispositivo USB / RS232. Puoi anche digitarlo a mano.",
+          "agent_device_id": "providerDeviceId dell'inverter esposto da solar-system-agent.",
+          "eybond_devaddr": "Indirizzo slave RS485 dietro il dongle EyBond.",
+          "eybond_broadcast": "Destinazione del broadcast UDP con cui il server locale si annuncia al dongle.",
+          "eybond_announce_ip": "Indirizzo IP comunicato al dongle, facoltativo. Lascia vuoto per il rilevamento automatico.",
+          "update_interval": "Ogni quanto interrogare il dispositivo. Valori più bassi significano aggiornamenti più frequenti.",
+          "strict_crc": "Scarta i frame Voltronic/PI18 con CRC non valido invece di provare a decodificarli."
+        }
+      }
+    }
+  },
+  "options": {
+    "abort": {
+      "no_devices": "Non è ancora stato rilevato nessun dongle EyBond. Accendi un dongle sulla stessa rete, aspetta che si connetta e riprova.",
+      "dongle_offline": "Il dongle non è connesso al momento, quindi non è possibile leggere il suo numero di serie (PN) per la migrazione. Aspetta che torni online e riprova.",
+      "not_eybond": "Questa voce non è un dispositivo EyBond, quindi non può essere convertita in hub.",
+      "rescan_started": "Ricerca di nuovi dongle in corso per circa un minuto. I nuovi dongle compariranno sotto «Gestisci i dispositivi rilevati»."
+    },
+    "error": {
+      "host_required": "Host/IP è obbligatorio per questo trasporto",
+      "serial_required": "Scegli o inserisci una porta seriale",
+      "agent_device_id_required": "L'ID dispositivo del provider è obbligatorio per l'agent locale"
+    },
+    "step": {
+      "init": {
+        "title": "Opzioni EyBond",
+        "menu_options": {
+          "devices": "Gestisci i dispositivi rilevati",
+          "rescan": "Cerca nuovi dongle",
+          "listener": "Impostazioni del listener",
+          "edit": "Modifica la connessione",
+          "migrate_hub": "Converti in hub EyBond",
+          "debug_panel": "Pannello di debug"
+        }
+      },
+      "rescan": {
+        "title": "Cerca nuovi dongle",
+        "description": "Trasmette il beacon di rilevamento per circa un minuto, così i nuovi dongle EyBond presenti in rete si collegano e vengono rilevati. I dongle già connessi potrebbero riconnettersi brevemente durante la scansione (il beacon non può puntare a un singolo dongle). Conferma per iniziare."
+      },
+      "migrate_hub": {
+        "title": "Converti in hub EyBond",
+        "description": "Converte la voce a dispositivo singolo in un hub EyBond: un solo listener che rileva i dongle dal numero di serie (PN) e permette di aggiungerne altri in seguito. Il dongle attualmente connesso diventa un figlio configurato, con il suo protocollo e indirizzo attuali. Lo storico delle entità viene conservato. Il dongle deve essere online adesso, per poterne leggere il PN. Conferma per convertire e ricaricare."
+      },
+      "devices": {
+        "title": "Configura i dispositivi rilevati",
+        "description": "Configura qui tutti i dongle rilevati e conferma una volta sola. I campi sono raggruppati per dongle in base al numero di serie (PN): abilitalo, dagli un nome, scegli un protocollo («none» = rilevato ma non interrogato), imposta l'indirizzo RS485 (1 se non è in cascata), oppure spunta la rimozione per dimenticarlo. Confermare NON ricarica l'hub: i dongle connessi restano online.\n\nRilevati:\n{devices}"
+      },
+      "listener": {
+        "title": "Impostazioni del listener",
+        "description": "Modifica il listener TCP e l'intervallo di interrogazione. Salvando, l'hub viene ricaricato.",
+        "data": {
+          "host": "Interfaccia di ascolto",
+          "port": "Porta di ascolto",
+          "eybond_broadcast": "Indirizzo di broadcast",
+          "eybond_announce_ip": "IP da annunciare",
+          "update_interval": "Intervallo di aggiornamento (secondi)"
+        }
+      },
+      "protocol": {
+        "title": "Protocollo di connessione",
+        "description": "Scegli il protocollo di comandi e dati parlato dall'inverter o dalla sorgente dati locale.",
+        "data": {
+          "protocol": "Protocollo"
+        }
+      },
+      "transport": {
+        "title": "Trasporto della connessione",
+        "description": "Protocollo: {protocol}. Scegli come questo hub lo raggiunge.",
+        "data": {
+          "transport": "Trasporto"
+        }
+      },
+      "connection": {
+        "title": "Impostazioni di connessione",
+        "description": "Protocollo: {protocol}. Trasporto: {transport}. Aggiorna l'indirizzo di connessione e l'intervallo di interrogazione.",
+        "data": {
+          "host": "Host / indirizzo IP",
+          "port": "Porta",
+          "serial_device": "Porta seriale",
+          "agent_device_id": "ID dispositivo del provider",
+          "eybond_devaddr": "Indirizzo dispositivo RS485",
+          "eybond_broadcast": "Indirizzo di broadcast",
+          "eybond_announce_ip": "IP da annunciare",
+          "update_interval": "Intervallo di aggiornamento (secondi)",
+          "strict_crc": "Validazione CRC rigorosa",
+          "debug_panel": "Mostra il pannello di debug nella barra laterale"
+        },
+        "data_description": {
+          "host": "Nome host o indirizzo IP dell'inverter, del gateway, dell'agent, oppure interfaccia locale di ascolto per EyBond.",
+          "port": "Porta TCP. Valori predefiniti: 8899 per TCP/Modbus/EyBond diretti, 8787 per l'agent locale.",
+          "serial_device": "Percorso del dispositivo USB / RS232. Puoi anche digitarlo a mano.",
+          "agent_device_id": "providerDeviceId dell'inverter esposto da solar-system-agent.",
+          "eybond_devaddr": "Indirizzo slave RS485 dietro il dongle EyBond.",
+          "eybond_broadcast": "Destinazione del broadcast UDP con cui il server locale si annuncia al dongle.",
+          "eybond_announce_ip": "Indirizzo IP comunicato al dongle, facoltativo. Lascia vuoto per il rilevamento automatico.",
+          "update_interval": "Ogni quanto interrogare il dispositivo. Valori più bassi significano aggiornamenti più frequenti.",
+          "strict_crc": "Scarta i frame Voltronic/PI18 con CRC non valido invece di provare a decodificarli."
+        }
+      },
+      "debug_panel": {
+        "title": "Pannello di debug",
+        "description": "Mostra nella barra laterale il pannello di debug in tempo reale, visibile solo agli amministratori. Ha effetto dopo il ricaricamento dell'integrazione.",
+        "data": {
+          "debug_panel": "Mostra il pannello di debug nella barra laterale"
+        }
+      }
+    }
+  },
+  "selector": {
+    "protocol": {
+      "options": {
+        "voltronic": "Voltronic / Axpert PI30",
+        "pi18": "PI18 / InfiniSolar-V",
+        "modbus": "Modbus RTU (SMG-II)",
+        "agent": "solar-system-agent locale"
+      }
+    },
+    "transport": {
+      "options": {
+        "tcp_elfin": "Elfin / bridge TCP trasparente",
+        "tcp": "TCP",
+        "serial": "Seriale / USB (RS232 diretta)",
+        "eybond": "Dongle Wi-Fi EyBond / SmartESS",
+        "agent_http": "HTTP"
+      }
+    }
+  }
+}

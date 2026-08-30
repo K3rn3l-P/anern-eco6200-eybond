@@ -61,10 +61,21 @@ or the inverter's own panel is still subject to the normal cadence.
 
 ### A NAK is no longer counted as a successful read
 
+This is the fix for sensors intermittently going `unavailable` / `unknown` for one cycle.
+
 `fetch_with_retry` treated any truthy result as success, including the error dict a NAK
 produces. A NAK is a well-formed frame carrying no data, so the freeze in `FailureTracker`
-never engaged and the section was blanked for a whole cycle — the sensors dropped to
-`unknown`. Commands the firmware NAKs by design (`QPIGS2`, `QFWS`) are still exempt.
+never engaged and the section was blanked for a whole cycle. Commands the firmware NAKs by
+design (`QPIGS2`, `QFWS`) are still exempt.
+
+The NAK itself is the inverter's behaviour, not this integration's: the vendor cloud gets
+NAKed on `QPIGS` too, roughly two requests in five. This fix stops a NAK from wiping the
+last known values; it does not stop the inverter from NAKing.
+
+⚠️ **Still under observation.** The root cause was confirmed on six samples and the fix has
+been running since 2026-08-30, but it has not yet been watched through a full sunny day —
+the blips were most frequent around midday, at peak PV. Treat this one as promising rather
+than proven.
 
 The upstream issue tracker has several reports that look like this one, including on other
 Anern units.

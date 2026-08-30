@@ -1,29 +1,97 @@
-# DESS Monitor Local Home Assistant integration
+# DESS Monitor Local — Anern ECO-6200 fork
 
-# Installation
+A fork of [Antoxa1081/home-assistant-dess-monitor-local](https://github.com/Antoxa1081/home-assistant-dess-monitor-local),
+adapted for an **Anern ECO-6200 inverter behind an EyBond Wi-Fi Plug Pro-05 dongle**.
 
-- Install as a custom repository via HACS
-- Manually download and extract to the custom_components directory
+All the hard work — the EyBond reverse-TCP transport, the protocol decoders, the hub and
+coordinator design — is Antoxa1081's. This fork only changes what that inverter needs.
+It keeps the `dess_monitor_local` domain, so it is a drop-in replacement: entity IDs do not
+change.
 
-Once installed, use Add Integration -> DESS Monitor Local.
+The changes are hardware-specific and would not be right for every inverter the upstream
+project supports, which is why they live here rather than in a pull request.
 
-# Configuration
+## What is different
 
-The setup wizard asks for a hub name, protocol, transport, and connection
-settings. Everything can be changed later via **Configure** in the integration
-card.
+### Solar priority can be set locally
 
-| Protocol | What it is | Transports |
-| --- | --- | --- |
-| `voltronic` | Voltronic / Axpert PI30 | `tcp_elfin`, `serial`, `eybond` |
-| `pi18` | PI18 / InfiniSolar-V | `tcp`, `serial` |
-| `modbus` | Modbus RTU (SMG-II) | `tcp` |
-| `agent` | Local [`solar-system-agent`] HTTP API | `agent_http` |
+The charger source priority on this inverter has three modes, and the PI30 `PCP` command
+only reaches two of them: `PCP00` answers `(ACK` and leaves the register untouched, so
+*Solar priority* was unreachable from the local channel.
 
-Common option for all protocols:
+The vendor cloud does not use PI30 for this setting — it writes **Modbus holding register
+0x1399 (5017)** through the same dongle, on Modbus slave id 5. `EyBondAdapter` now does the
+same, and all three modes work.
 
-- **Update interval** — how often Home Assistant polls the device, `1`–`300` s
-  (default `10`).
+The dongle turned out to be a plain serial passthrough: neither the envelope `devaddr` nor
+the `devcode` matter, the bytes reach the serial line either way.
 
-For protocol-specific notes, troubleshooting and the internal `device` URI
-format see the [Configuration wiki page](https://github.com/Antoxa1081/home-assistant-dess-monitor-local/wiki).
+### The selects use the inverter's own names
+
+The generic PI30 names describe a different device. On this inverter register 0 is
+*Solar priority*, not "utility first" — that is what the app, the web portal and the cloud
+API all call it. Reading the old select told you the opposite of what the inverter was doing.
+
+| register | upstream option | this fork |
+|---|---|---|
+| 0 | `UtilityFirst` | `Solar priority` |
+| 1 | `SolarFirst` | `Solar and mains` |
+| 2 | `SolarAndUtility` | `Solar only` |
+
+Output priority changes one name, `UtilityFirst` to `Utility`, matching the cloud select.
+
+⚠️ **This is a breaking change for existing automations.** The old names are still accepted
+as aliases, translated in `async_handle_select_option` — before Home Assistant validates the
+option, because HA raises `not_valid_option` before `async_select_option` ever runs. An
+automation still passing an old name keeps working instead of failing silently.
+
+### Selects reflect a change within one cycle
+
+Both priorities live in `QPIRI`, which is polled every 12 cycles as essentially static data,
+and the select never wrote its optimistic value to the state machine. A change took up to
+12 minutes to show (11 minutes, measured).
+
+Two fixes: `async_write_ha_state()` after the optimistic write, and
+`DirectCoordinator.force_section()`, which polls one section on the next cycle regardless of
+its cadence. Measured after the change: 73 and 74 seconds. No extra traffic at rest — the
+12-cycle cadence still governs routine polling.
+
+This only covers writes made through Home Assistant. A change made from the app, the portal
+or the inverter's own panel is still subject to the normal cadence.
+
+### A NAK is no longer counted as a successful read
+
+`fetch_with_retry` treated any truthy result as success, including the error dict a NAK
+produces. A NAK is a well-formed frame carrying no data, so the freeze in `FailureTracker`
+never engaged and the section was blanked for a whole cycle — the sensors dropped to
+`unknown`. Commands the firmware NAKs by design (`QPIGS2`, `QFWS`) are still exempt.
+
+The upstream issue tracker has several reports that look like this one, including on other
+Anern units.
+
+### A `RAW` command in the debug panel
+
+`RAW <devaddr> <devcode> <hex bytes…>` sends bytes straight through the EyBond envelope,
+bypassing the protocol adapters. It is how the Modbus register above was found, and it is
+the most useful diagnostic tool on this hardware.
+
+```
+RAW 1 0x994 05 06 13 99 00 02 dd 24
+```
+
+## Installation
+
+Add this repository as a HACS custom repository (category: Integration), then install and
+restart Home Assistant. Replacing the upstream integration keeps every entity ID, because
+the domain is unchanged.
+
+Setup and configuration are otherwise identical to upstream — see
+[its README](https://github.com/Antoxa1081/home-assistant-dess-monitor-local) and wiki.
+
+## Hardware this is tested on
+
+- Anern ECO-6200 / SCI-EVO-6200, 6200 W, 48 V
+- EyBond Wi-Fi Plug Pro-05 dongle, reverse-TCP on port 8899
+- 48 V 100 Ah LiFePO4 bank, 1720 Wp of panels
+
+Nothing here has been tested on any other combination.

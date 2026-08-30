@@ -1,19 +1,20 @@
 {
   "domain": "dess_monitor_local",
-  "name": "DESS Monitor Local",
+  "name": "DESS Monitor Local (Anern ECO-6200)",
   "codeowners": [
+    "@K3rn3l-P",
     "@Antoxa1081"
   ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/Antoxa1081/home-assistant-dess-monitor/blob/main/README.md",
+  "documentation": "https://github.com/K3rn3l-P/anern-eco6200-eybond/blob/main/README.md",
   "homekit": {},
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/Antoxa1081/home-assistant-dess-monitor/issues",
+  "issue_tracker": "https://github.com/K3rn3l-P/anern-eco6200-eybond/issues",
   "requirements": [
     "pyserial-asyncio-fast==0.16"
   ],
   "ssdp": [],
-  "version": "1.1.0-beta.1",
+  "version": "1.1.0-anern.1",
   "zeroconf": []
 }

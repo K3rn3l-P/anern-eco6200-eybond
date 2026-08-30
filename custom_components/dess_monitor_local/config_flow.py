@@ -21,6 +21,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_AGENT_DEVICE_ID,
+    CONF_DEBUG_PANEL,
     CONF_DEVICE,
     CONF_ENTRY_KIND,
     CONF_EYBOND_ANNOUNCE_IP,
@@ -38,6 +39,7 @@ from .const import (
     CONF_TRANSPORT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_AGENT_PORT,
+    DEFAULT_DEBUG_PANEL,
     DEFAULT_EYBOND_ANNOUNCE_IP,
     DEFAULT_EYBOND_BIND_HOST,
     DEFAULT_EYBOND_BIND_PORT,
@@ -825,11 +827,24 @@ class OptionsFlow(config_entries.OptionsFlow):
                         CONF_EYBOND_ANNOUNCE_IP: eybond_announce_ip,
                         CONF_UPDATE_INTERVAL: update_interval,
                         CONF_STRICT_CRC: strict_crc,
+                        CONF_DEBUG_PANEL: bool(
+                            user_input.get(CONF_DEBUG_PANEL, DEFAULT_DEBUG_PANEL)
+                        ),
                     },
                 )
 
         defaults = {**self._defaults, **(user_input or {})}
         schema = await _build_connection_schema(protocol, transport, defaults)
+        # Append the admin-only debug-panel toggle (panel is one per HA, but any
+        # entry may flip it — see async_apply_debug_panel). Applied on reload.
+        schema = schema.extend({
+            vol.Optional(
+                CONF_DEBUG_PANEL,
+                default=self._config_entry.options.get(
+                    CONF_DEBUG_PANEL, DEFAULT_DEBUG_PANEL
+                ),
+            ): BooleanSelector(),
+        })
         return self.async_show_form(
             step_id="connection",
             data_schema=schema,
@@ -898,7 +913,31 @@ class EybondHubOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["devices", "rescan", "listener"],
+            menu_options=["devices", "rescan", "listener", "debug_panel"],
+        )
+
+    async def async_step_debug_panel(self, user_input=None):
+        """Toggle the admin-only live debug panel in the sidebar.
+
+        Writes the option and bumps the revision so the entry reloads and
+        ``async_apply_debug_panel`` shows/hides the panel accordingly.
+        """
+        opts = dict(self._config_entry.options)
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data=self._bumped_options(
+                    {CONF_DEBUG_PANEL: bool(user_input.get(CONF_DEBUG_PANEL, False))}
+                ),
+            )
+        return self.async_show_form(
+            step_id="debug_panel",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_DEBUG_PANEL,
+                    default=opts.get(CONF_DEBUG_PANEL, DEFAULT_DEBUG_PANEL),
+                ): BooleanSelector(),
+            }),
         )
 
     async def async_step_rescan(self, user_input=None):

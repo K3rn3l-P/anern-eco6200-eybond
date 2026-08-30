@@ -23,6 +23,64 @@ BATTERY_MODE_LI_BMS = "Lithium (BMS)"
 BATTERY_MODE_LEAD_ACID = "Lead-acid"
 BATTERY_MODES = (BATTERY_MODE_LI_VOLTAGE, BATTERY_MODE_LI_BMS, BATTERY_MODE_LEAD_ACID)
 
+# The generic PI30 names don't describe this inverter. It has three charger
+# modes, and QPIRI code 0 is "Solar priority" here, not "utility first" — the
+# app, the portal and the cloud API all call it that. Options carry the names
+# the hardware actually uses; the PI30 wire values stay in the maps below.
+# docs/impianto-solare/dess-local-solar-priority-modbus.md
+CHARGER_SOLAR_PRIORITY = "Solar priority"
+CHARGER_SOLAR_AND_MAINS = "Solar and mains"
+CHARGER_SOLAR_ONLY = "Solar only"
+CHARGER_PRIORITY_OPTIONS = (
+    CHARGER_SOLAR_PRIORITY, CHARGER_SOLAR_AND_MAINS, CHARGER_SOLAR_ONLY,
+)
+CHARGER_PRIORITY_SETTINGS = {
+    CHARGER_SOLAR_PRIORITY: ChargeSourcePrioritySetting.UTILITY_FIRST,
+    CHARGER_SOLAR_AND_MAINS: ChargeSourcePrioritySetting.SOLAR_FIRST,
+    CHARGER_SOLAR_ONLY: ChargeSourcePrioritySetting.SOLAR_AND_UTILITY,
+}
+# QPIRI decodes the register with the generic PI30 table, so readings come back
+# under the old names.
+CHARGER_PRIORITY_FROM_PI30 = {
+    "UtilityFirst": CHARGER_SOLAR_PRIORITY,
+    "SolarFirst": CHARGER_SOLAR_AND_MAINS,
+    "SolarAndUtility": CHARGER_SOLAR_ONLY,
+}
+
+OUTPUT_UTILITY = "Utility"
+OUTPUT_SOLAR = "Solar"
+OUTPUT_SBU = "SBU"
+OUTPUT_PRIORITY_OPTIONS = (OUTPUT_UTILITY, OUTPUT_SOLAR, OUTPUT_SBU)
+OUTPUT_PRIORITY_FROM_PI30 = {
+    "UtilityFirst": OUTPUT_UTILITY,
+    "SolarFirst": OUTPUT_SOLAR,
+    "Solar": OUTPUT_SOLAR,
+    "SBU": OUTPUT_SBU,
+}
+
+# Old option names keep working: an automation or blueprint still passing
+# "UtilityFirst" must not silently stop writing.
+CHARGER_PRIORITY_ALIASES = {
+    **{o: o for o in CHARGER_PRIORITY_OPTIONS},
+    **CHARGER_PRIORITY_FROM_PI30,
+}
+OUTPUT_PRIORITY_ALIASES = {
+    **{o: o for o in OUTPUT_PRIORITY_OPTIONS},
+    **OUTPUT_PRIORITY_FROM_PI30,
+}
+
+
+def _canonical(option: str, aliases: dict[str, str]) -> str | None:
+    return aliases.get(option)
+
+
+def _display_charger(pi30_value):
+    return CHARGER_PRIORITY_FROM_PI30.get(pi30_value, pi30_value)
+
+
+def _display_output(pi30_value):
+    return OUTPUT_PRIORITY_FROM_PI30.get(pi30_value, pi30_value)
+
 
 #
 # SCAN_INTERVAL = timedelta(seconds=30)
@@ -93,10 +151,26 @@ class BatteryModeSelect(SelectEntity, RestoreEntity):
 class SelectBase(CoordinatorEntity, SelectEntity):
     # should_poll = True
 
+    # Legacy option names accepted on the way in, mapped to current ones.
+    _option_aliases: dict[str, str] = {}
+
     def __init__(self, inverter_device: InverterDevice, coordinator: DirectCoordinator):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._inverter_device = inverter_device
+
+    async def async_handle_select_option(self, option: str) -> None:
+        """Translate a legacy option name before HA validates it.
+
+        HA checks the value against ``options`` and raises before
+        ``async_select_option`` ever runs, so an automation still passing an
+        old name would fail the call instead of writing. Silently not
+        switching the inverter is the worst outcome here, since one of these
+        selects is what the night-time battery protection writes to.
+        """
+        await super().async_handle_select_option(
+            self._option_aliases.get(option, option)
+        )
 
     # To link this entity to the cover device, this property must return an
     # identifiers value matching that used in the cover, but no other information such
@@ -155,80 +229,73 @@ def resolve_max_utility_charging_current(device_data):
 
 class InverterOutputPrioritySelect(SelectBase):
     _attr_current_option = None
+    _option_aliases = OUTPUT_PRIORITY_ALIASES
 
     def __init__(self, inverter_device: InverterDevice, coordinator: DirectCoordinator):
         super().__init__(inverter_device, coordinator)
         self._attr_unique_id = f"{self._inverter_device.inverter_id}_output_priority"
         self._attr_name = f"{self._inverter_device.name} Output Priority"
-        self._attr_options = ['UtilityFirst', 'SBU', 'Solar']
+        self._attr_options = list(OUTPUT_PRIORITY_OPTIONS)
 
         if coordinator.data is not None:
             data = coordinator.data.get(self._inverter_device.inverter_id) or {}
-            # device_data = self._inverter_device.device_data
-            # print('device_data')
-            output_source_priority = resolve_output_priority(data)
-            self._attr_current_option = output_source_priority
-            # self._attr_current_option = resolve_output_priority(data, device_data)
+            self._attr_current_option = _display_output(resolve_output_priority(data))
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        data = self.data
-        # device_data = self._inverter_device.device_data
-        mapper = {
-            'UtilityFirst': 'UtilityFirst',
-            'SBU': 'SBU',
-            'Solar': 'Solar',
-            'SolarFirst': 'Solar',
-        }
-        priority = resolve_output_priority(data)
-        mapped_priority = mapper.get(priority, priority)
-        self._attr_current_option = mapped_priority
+        self._attr_current_option = _display_output(resolve_output_priority(self.data))
         self.async_write_ha_state()
 
     async def async_select_option(self, option: str):
-        if option in self._attr_options:
+        canonical = _canonical(option, OUTPUT_PRIORITY_ALIASES)
+        if canonical is not None:
             map_priority = {
-                'UtilityFirst': OutputSourcePrioritySetting.UTILITY_FIRST,
-                'SBU': OutputSourcePrioritySetting.SBU_PRIORITY,
-                'Solar': OutputSourcePrioritySetting.SOLAR_FIRST,
+                OUTPUT_UTILITY: OutputSourcePrioritySetting.UTILITY_FIRST,
+                OUTPUT_SBU: OutputSourcePrioritySetting.SBU_PRIORITY,
+                OUTPUT_SOLAR: OutputSourcePrioritySetting.SOLAR_FIRST,
             }
             queue = self.hass.data["dess_monitor_local_queue"]
             await queue.enqueue(
-                lambda: set_output_source_priority(self._inverter_device.device_data, map_priority[option]))
-            self._attr_current_option = option
+                lambda: set_output_source_priority(
+                    self._inverter_device.device_data, map_priority[canonical]))
+            self._attr_current_option = canonical
+            self.async_write_ha_state()
+        self.coordinator.force_section("qpiri")
         await self.coordinator.async_request_refresh()
 
 
 class InverterChargeSourcePrioritySelect(SelectBase):
     _attr_current_option = None
+    _option_aliases = CHARGER_PRIORITY_ALIASES
 
     def __init__(self, inverter_device: InverterDevice, coordinator: DirectCoordinator):
         super().__init__(inverter_device, coordinator)
         self._attr_unique_id = f"{self._inverter_device.inverter_id}_charge_source_priority"
         self._attr_name = f"{self._inverter_device.name} Charge Source Priority"
-        self._attr_options = ['UtilityFirst', 'SolarFirst', 'SolarAndUtility']  ## ChargeSourcePriority
+        self._attr_options = list(CHARGER_PRIORITY_OPTIONS)
 
         if coordinator.data is not None:
             data = coordinator.data.get(self._inverter_device.inverter_id) or {}
-            self._attr_current_option = resolve_chrage_source_priority(data)
+            self._attr_current_option = _display_charger(
+                resolve_chrage_source_priority(data))
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        data = self.data
-        self._attr_current_option = resolve_chrage_source_priority(data)
+        self._attr_current_option = _display_charger(
+            resolve_chrage_source_priority(self.data))
         self.async_write_ha_state()
 
     async def async_select_option(self, option: str):
-        if option in self._attr_options:
-            map_priority = {
-                'UtilityFirst': ChargeSourcePrioritySetting.UTILITY_FIRST,
-                'SolarFirst': ChargeSourcePrioritySetting.SOLAR_FIRST,
-                'SolarAndUtility': ChargeSourcePrioritySetting.SOLAR_AND_UTILITY,
-            }
+        canonical = _canonical(option, CHARGER_PRIORITY_ALIASES)
+        if canonical is not None:
             queue = self.hass.data["dess_monitor_local_queue"]
             await queue.enqueue(
-                lambda: set_charge_source_priority(self._inverter_device.device_data, map_priority[option]))
-            self._attr_current_option = option
+                lambda: set_charge_source_priority(
+                    self._inverter_device.device_data,
+                    CHARGER_PRIORITY_SETTINGS[canonical]))
+            self._attr_current_option = canonical
+            self.async_write_ha_state()
+        self.coordinator.force_section("qpiri")
         await self.coordinator.async_request_refresh()
 
 
@@ -275,4 +342,6 @@ class InverterMaxUtilityChargingCurrentNumber(SelectBase):
                 )
             )
             self._attr_current_option = option
+            self.async_write_ha_state()
+        self.coordinator.force_section("qpiri")
         await self.coordinator.async_request_refresh()

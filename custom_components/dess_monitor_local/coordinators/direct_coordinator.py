@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 import async_timeout
@@ -8,6 +9,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
+from custom_components.dess_monitor_local import diag_hub
 from custom_components.dess_monitor_local.api.dispatcher import get_direct_data
 from custom_components.dess_monitor_local.const import (
     CONF_DEVICE,
@@ -37,7 +39,28 @@ class DirectCoordinator(DataUpdateCoordinator):
     # then up to N-1 consecutive failures fall back to the last known
     # sub-dict before the entity finally goes to "unavailable".
     _RETRY_DELAY_S = 0.25
-    _MAX_CONSECUTIVE_FAILURES = 3
+    # 6 (not 3): EyBond dongles clean-close every ~4s and reconnect in ~1s, so a
+    # child's poll occasionally lands in a gap and fails. With the now-short
+    # cycles a child reaches 3 consecutive failures in ~30s, flickering entities
+    # to "unavailable" during normal cycling. Tolerate more transient misses —
+    # stay on frozen last-known — before flipping unavailable.
+    _MAX_CONSECUTIVE_FAILURES = 6
+    # Commands the inverter NAKs by design because its firmware doesn't
+    # implement them. A NAK from these is the normal answer, so it must NOT
+    # count as a failed read — otherwise every cycle burns a pointless retry.
+    _NAK_EXPECTED = ("QPIGS2", "QFWS")
+    # Per-command poll cadence (poll every Nth cycle; carry forward in between).
+    # Live telemetry every cycle keeps values fresh and the per-cycle command
+    # count tiny (fits a cycling dongle's brief window → far fewer failures);
+    # static/slow data is refreshed periodically. (cmd, section, every_n_cycles)
+    _CMD_SCHEDULE = (
+        ("QPIGS", "qpigs", 1),    # live telemetry — every cycle
+        ("QMOD", "qmod", 2),      # operating mode — changes slowly
+        ("QPIGS2", "qpigs2", 2),  # 2nd MPPT (often NAK'd)
+        ("QPIWS", "qpiws", 3),    # warnings/faults (PI30)
+        ("QFWS", "qfws", 3),      # warnings/faults (PI18)
+        ("QPIRI", "qpiri", 12),   # ratings/nameplate — essentially static
+    )
     # Per-device poll bound, applied ONLY with multiple devices (an EyBond hub
     # with several children). One stuck/half-attentive dongle answering FC=4
     # slowly used to drag the whole-hub gather past the 120s cycle cap, which
@@ -46,7 +69,11 @@ class DirectCoordinator(DataUpdateCoordinator):
     # last-known for the cycle while the healthy ones still publish on time.
     # Single-device entries stay uncapped — a legacy cloud-proxied transport can
     # legitimately take minutes and has no sibling to starve.
-    _PER_DEVICE_POLL_TIMEOUT = 45.0
+    # With per-dongle parallelism the cycle is the SLOWEST child (not the sum),
+    # and the publish is atomic at that point, so keep the bound tight: a child
+    # stuck past this (its dongle gone for the whole poll) freezes on last-known
+    # rather than dragging every entity's update behind it.
+    _PER_DEVICE_POLL_TIMEOUT = 25.0
 
     def __init__(self, hass: HomeAssistant, config_entry, targets=None):
         """Initialize my coordinator.
@@ -75,8 +102,23 @@ class DirectCoordinator(DataUpdateCoordinator):
         self._targets = targets
         # Per-(target id, command) consecutive-failure counter + freeze policy.
         self._failures = FailureTracker(self._MAX_CONSECUTIVE_FAILURES)
+        # Cycle counter driving the split poll cadence (see _CMD_SCHEDULE).
+        self._cycle = 0
+        # Sections to poll on the next cycle whatever their cadence says.
+        # Priority writes land in QPIRI, which is on a 12-cycle beat, so
+        # without this a select keeps showing the old value for up to 12
+        # minutes after the change actually took.
+        self._forced_sections: set[str] = set()
         # self.my_api = my_api
         # self._device: MyDevice | None = None
+
+    def force_section(self, section: str) -> None:
+        """Poll ``section`` on the next cycle, ignoring its cadence.
+
+        Call it right after writing a setting so the read-back doesn't wait
+        out the slow beat the setting's command sits on.
+        """
+        self._forced_sections.add(section)
 
     async def _async_setup(self):
         """Set up the coordinator
@@ -98,6 +140,20 @@ class DirectCoordinator(DataUpdateCoordinator):
         """
         self._targets = list(targets)
         self.devices = list(targets)
+
+    def _child_failure_summary(self) -> dict:
+        """Per-child ``"ok"`` / ``"fail:N"`` for the debug panel's cycle event.
+
+        ``FailureTracker._counts`` is ``{device: {command: consecutive_fails}}``;
+        sum a child's command failures.
+        """
+        counts = getattr(self._failures, "_counts", {}) or {}
+        out: dict = {}
+        for target in self.devices:
+            key = getattr(target, "id", target)
+            n = sum((counts.get(key) or {}).values())
+            out[key] = "ok" if n == 0 else f"fail:{n}"
+        return out
 
     async def get_active_devices(self):
         # Explicit targets (EyBond hub children) take precedence.
@@ -135,21 +191,46 @@ class DirectCoordinator(DataUpdateCoordinator):
             ``key`` is the target's stable id (failure tracking + last-known
             lookup); ``uri`` is the transport address the command is sent to.
             """
+            # EyBond children are serialized per-dongle inside the manager
+            # (per-session send_lock), so routing them through the single
+            # global CommandQueue would serialize across dongles too — making
+            # the cycle the SUM of every child's command times and letting one
+            # cycling dongle stall the rest. Send those directly so the
+            # per-child gather actually polls the dongles in parallel. The
+            # legacy single-device path keeps the queue (one socket, rate-limit).
+            via_queue = not uri.startswith("eybond")
             for attempt in range(2):
                 try:
-                    result = await queue.enqueue(
-                        lambda d=uri, c=cmd: get_direct_data(
-                            d, c, 30, strict_crc=strict_crc
+                    if via_queue:
+                        result = await queue.enqueue(
+                            lambda d=uri, c=cmd: get_direct_data(
+                                d, c, 30, strict_crc=strict_crc
+                            )
                         )
-                    )
+                    else:
+                        result = await get_direct_data(
+                            uri, cmd, 30, strict_crc=strict_crc
+                        )
                 except Exception as err:  # transport raised unexpectedly
                     _LOGGER.debug(
                         "%s/%s attempt %d raised %r", key, cmd, attempt + 1, err
                     )
                     result = None
                 if result:
-                    self._failures.on_success(key, cmd)
-                    return result
+                    if cmd not in self._NAK_EXPECTED and result.get("error"):
+                        # A NAK is a well-formed frame carrying no data. Without
+                        # this it counts as a successful read, the freeze in
+                        # FailureTracker never engages, and the section is blanked
+                        # for a whole cycle.
+                        # See docs/impianto-solare/dess-local-nak-qpigs.md
+                        _LOGGER.debug(
+                            "%s/%s attempt %d rejected: %s",
+                            key, cmd, attempt + 1, result.get("error"),
+                        )
+                        result = None
+                    else:
+                        self._failures.on_success(key, cmd)
+                        return result
                 if attempt == 0:
                     await asyncio.sleep(self._RETRY_DELAY_S)
 
@@ -170,36 +251,32 @@ class DirectCoordinator(DataUpdateCoordinator):
 
         try:
             async with async_timeout.timeout(120):
+                cycle = self._cycle
+                # Claim the forced set for this cycle: a write arriving while
+                # the poll runs must survive into the next one, not be dropped.
+                forced = self._forced_sections
+                self._forced_sections = set()
+
                 async def fetch_device_data(target):
                     key = target.id
                     uri = target.uri
-                    qpigs = await fetch_with_retry(key, uri, 'QPIGS', 'qpigs')
-                    qpiri = await fetch_with_retry(key, uri, 'QPIRI', 'qpiri')
-                    # QMOD = current operating mode (PowerOn / Standby /
-                    # Line / Battery / Fault). Cheap one-byte answer; gives
-                    # us a real status sensor for automations instead of
-                    # parsing the QPIGS status bits string.
-                    qmod = await fetch_with_retry(key, uri, 'QMOD', 'qmod')
-                    # QPIGS2 = second PV input on dual-MPPT models. Many
-                    # inverters NAK it, in which case fetch_with_retry
-                    # returns {} and the PV2 sensors stay unavailable —
-                    # zero cost for the rest of users.
-                    qpigs2 = await fetch_with_retry(key, uri, 'QPIGS2', 'qpigs2')
-                    # QPIWS = warning/fault bitstring. PI18 inverters NAK
-                    # this and respond to QFWS instead; fetch both — the
-                    # one that doesn't apply just returns ``{}`` and
-                    # downstream sensors stay unavailable.
-                    qpiws = await fetch_with_retry(key, uri, 'QPIWS', 'qpiws')
-                    qfws = await fetch_with_retry(key, uri, 'QFWS', 'qfws')
-                    return key, {
-                        "timestamp": datetime.now(),
-                        'qpigs': qpigs,
-                        'qpiri': qpiri,
-                        'qmod': qmod,
-                        'qpigs2': qpigs2,
-                        'qpiws': qpiws,
-                        'qfws': qfws,
-                    }
+                    prev = prev_data.get(key) or {}
+                    # Split cadence (see _CMD_SCHEDULE): poll live telemetry
+                    # (QPIGS) every cycle so values stay fresh AND the per-cycle
+                    # command count stays small enough to fit a cycling dongle's
+                    # brief connection window; static/rare sections (ratings,
+                    # faults, mode, PV2) are polled every Nth cycle and carried
+                    # forward in between, so a skipped slow command never empties
+                    # a section or trips its failure counter.
+                    sections: dict = {"timestamp": datetime.now()}
+                    for cmd, section, cadence in self._CMD_SCHEDULE:
+                        if cycle % cadence == 0 or section in forced:
+                            sections[section] = await fetch_with_retry(
+                                key, uri, cmd, section
+                            )
+                        else:
+                            sections[section] = prev.get(section) or {}
+                    return key, sections
                     # return device, {
                     #     "timestamp": datetime.now(),
                     #     "qpigs": {
@@ -281,9 +358,18 @@ class DirectCoordinator(DataUpdateCoordinator):
                         )
                         return key, dict(prev_data.get(key) or {})
 
+                _t0 = time.monotonic()
                 data_map = dict(
                     await asyncio.gather(*map(fetch_device_guarded, self.devices))
                 )
+                if diag_hub.active():
+                    diag_hub.publish({
+                        "t": "cycle",
+                        "dur_s": round(time.monotonic() - _t0, 2),
+                        "n": cycle,
+                        "children": self._child_failure_summary(),
+                    })
+                self._cycle += 1  # advance the split-cadence schedule
                 return data_map
         except TimeoutError as err:
             # Raising ConfigEntryAuthFailed will cancel future updates

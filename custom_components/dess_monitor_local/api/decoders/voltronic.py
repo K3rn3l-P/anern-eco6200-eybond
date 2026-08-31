@@ -61,6 +61,14 @@ _QPIGS_FIELDS = (
     "reserved_cccc",
 )
 
+# Every field through "device_status_bits_b10_b8" (index 20) is read by some
+# sensor in the integration — direct_sensor.py uses everything through
+# "pv_charging_power" (19), binary_sensor.py additionally reads
+# "device_status_bits_b10_b8" (20) for the fault/warning bits. Nothing reads
+# "reserved_a"/"reserved_bb"/"reserved_cccc" (21-23), so a frame missing only
+# those is still complete for every consumer that exists.
+_QPIGS_MIN_FIELDS = 21
+
 
 def decode_qpigs(ascii_str: str) -> dict:
     result = dict(zip(_QPIGS_FIELDS, ascii_str.split()))
@@ -68,14 +76,16 @@ def decode_qpigs(ascii_str: str) -> dict:
     # ones), so a mangled frame with a stray \r mid-payload gets truncated
     # by response.partition(b"\r") in EyBondAdapter.get_data before it ever
     # reaches here. Fewer tokens than fields is silent with zip(), and a
-    # frame missing the safety-critical fields is neither empty nor NAK, so
-    # it would otherwise sail past the checks in decode_direct_response and
-    # read as a successful, if incomplete, response.
+    # frame missing fields this way is neither empty nor NAK, so it would
+    # otherwise sail past the checks in decode_direct_response and read as
+    # a successful, if incomplete, response — each dropped field then goes
+    # `unknown` on its own sensor, one field at a time as truncation varies
+    # cycle to cycle, since nothing here objects.
     # See docs/impianto-solare/dess-local-qpigs-truncation.md
-    if "battery_voltage" not in result:
+    if len(result) < _QPIGS_MIN_FIELDS:
         return {
             "error": f"QPIGS frame too short: {len(result)} of "
-                      f"{len(_QPIGS_FIELDS)} fields, missing battery_voltage"
+                      f"{len(_QPIGS_FIELDS)} fields (need {_QPIGS_MIN_FIELDS})"
         }
     # Sanitize the trailing status-bit fields. On firmwares that send a
     # short QPIGS frame, the 2-byte CRC can bleed into the last token

@@ -64,6 +64,19 @@ _QPIGS_FIELDS = (
 
 def decode_qpigs(ascii_str: str) -> dict:
     result = dict(zip(_QPIGS_FIELDS, ascii_str.split()))
+    # The EyBond transport isn't CRC-checked (unlike the direct TCP/serial
+    # ones), so a mangled frame with a stray \r mid-payload gets truncated
+    # by response.partition(b"\r") in EyBondAdapter.get_data before it ever
+    # reaches here. Fewer tokens than fields is silent with zip(), and a
+    # frame missing the safety-critical fields is neither empty nor NAK, so
+    # it would otherwise sail past the checks in decode_direct_response and
+    # read as a successful, if incomplete, response.
+    # See docs/impianto-solare/dess-local-qpigs-truncation.md
+    if "battery_voltage" not in result:
+        return {
+            "error": f"QPIGS frame too short: {len(result)} of "
+                      f"{len(_QPIGS_FIELDS)} fields, missing battery_voltage"
+        }
     # Sanitize the trailing status-bit fields. On firmwares that send a
     # short QPIGS frame, the 2-byte CRC can bleed into the last token
     # (e.g. device_status_bits_b10_b8 = "110s"), which breaks any

@@ -6,10 +6,12 @@ from datetime import UTC, datetime
 from homeassistant.components.sensor import RestoreSensor, SensorDeviceClass, SensorStateClass
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfEnergy, UnitOfTime
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.util import slugify
 
+from custom_components.dess_monitor_local.const import DOMAIN
 from custom_components.dess_monitor_local.sanity import (
     is_plausible_battery_current,
     is_plausible_battery_voltage,
@@ -429,11 +431,27 @@ class DirectBatteryStateOfChargeSensor(RestoreSensor, DirectTypedSensorBase):
         self._hass = hass
 
         device_slug = slugify(self._inverter_device.name)
-        # The "_ah" suffix matches the new BatteryCapacityNumber name
-        # "vSoC Battery Capacity (Ah)" — HA slugifies that to
-        # "vsoc_battery_capacity_ah". The legacy Wh-based entity at
-        # "{slug}_vsoc_battery_capacity" stays orphan after upgrade and
-        # is not tracked here.
+        # The ids below are only a FALLBACK. The real ones are resolved from the
+        # entity registry by unique_id in `_resolve_input_entities()`.
+        #
+        # Guessing an entity_id from the device name breaks whenever HA assigns a
+        # different object_id than the name suggests. Seen in the field: every
+        # entity carried an extra "solare_" prefix, so all six guesses missed and
+        # the whole vSoC family stayed unavailable while the settings were
+        # correctly filled in — with nothing in the log to explain it.
+        #
+        # unique_id suffixes come from number.py / select.py / switch.py. Careful
+        # with discharge_floor: its unique_id ends in "discharge_floor_soc" while
+        # its entity_id ends in "vsoc_discharge_floor". They are not the same.
+        self._unique_suffixes = {
+            "capacity": ("number", "battery_capacity_ah"),
+            "sync_voltage": ("number", "full_charge_sync_voltage"),
+            "battery_mode": ("select", "battery_mode"),
+            "float_deadband": ("switch", "float_deadband"),
+            "float_window": ("number", "float_voltage_window"),
+            "float_noise": ("number", "float_noise_floor"),
+        }
+        self._unsub_inputs: list = []
         self._capacity_entity_id = f"number.{device_slug}_vsoc_battery_capacity_ah"
         self._sync_voltage_entity_id = (
             f"number.{device_slug}_vsoc_full_charge_sync_voltage"
@@ -457,32 +475,67 @@ class DirectBatteryStateOfChargeSensor(RestoreSensor, DirectTypedSensorBase):
         # estimator on each tick.
         self._full_charge_sync_voltage = 0.0
 
-        async_track_state_change_event(
-            self._hass,
-            [self._capacity_entity_id],
-            self._handle_battery_capacity_change,
+        # Listeners are NOT registered here: the entity registry is not usable
+        # from __init__, so they would attach to the guessed ids above.
+        # `_resolve_input_entities()` registers them from async_added_to_hass,
+        # against the resolved ids, and re-attaches them on registry changes.
+
+    def _registry_id(self, key: str, fallback: str) -> str:
+        """The entity_id from the registry, instead of one guessed from a name.
+
+        This integration generates the unique_ids itself
+        (``{inverter_id}_{suffix}``), so the registry can answer definitively.
+        The fallback only matters before the entity is registered.
+        """
+        domain, suffix = self._unique_suffixes[key]
+        found = er.async_get(self._hass).async_get_entity_id(
+            domain, DOMAIN, f"{self._inverter_device.inverter_id}_{suffix}"
         )
-        async_track_state_change_event(
+        return found or fallback
+
+    @callback
+    def _resolve_input_entities(self, _event=None) -> None:
+        """Re-read the input entity_ids and re-attach the state listeners.
+
+        Called once at startup and on every registry change, so renaming an
+        entity no longer silently switches the estimator off.
+        """
+        self._capacity_entity_id = self._registry_id("capacity", self._capacity_entity_id)
+        self._sync_voltage_entity_id = self._registry_id("sync_voltage", self._sync_voltage_entity_id)
+        self._battery_mode_entity_id = self._registry_id("battery_mode", self._battery_mode_entity_id)
+        self._float_deadband_switch_id = self._registry_id("float_deadband", self._float_deadband_switch_id)
+        self._float_voltage_window_id = self._registry_id("float_window", self._float_voltage_window_id)
+        self._float_noise_floor_id = self._registry_id("float_noise", self._float_noise_floor_id)
+
+        while self._unsub_inputs:
+            self._unsub_inputs.pop()()
+        self._unsub_inputs.append(async_track_state_change_event(
+            self._hass, [self._capacity_entity_id], self._handle_battery_capacity_change))
+        self._unsub_inputs.append(async_track_state_change_event(
+            self._hass, [self._sync_voltage_entity_id], self._handle_sync_voltage_change))
+        self._unsub_inputs.append(async_track_state_change_event(
+            self._hass, [self._battery_mode_entity_id], self._handle_battery_mode_change))
+        self._unsub_inputs.append(async_track_state_change_event(
             self._hass,
-            [self._sync_voltage_entity_id],
-            self._handle_sync_voltage_change,
-        )
-        async_track_state_change_event(
-            self._hass,
-            [self._battery_mode_entity_id],
-            self._handle_battery_mode_change,
-        )
-        async_track_state_change_event(
-            self._hass,
-            [
-                self._float_deadband_switch_id,
-                self._float_voltage_window_id,
-                self._float_noise_floor_id,
-            ],
-            self._handle_float_deadband_change,
-        )
+            [self._float_deadband_switch_id, self._float_voltage_window_id, self._float_noise_floor_id],
+            self._handle_float_deadband_change))
+
+        # Read once immediately: listening only for *changes* leaves a value
+        # that is already set invisible until the user touches it again.
+        self._update_battery_capacity_from_state(self._hass.states.get(self._capacity_entity_id))
 
     async def async_added_to_hass(self) -> None:
+        self._resolve_input_entities()
+        self.async_on_remove(
+            self._hass.bus.async_listen("entity_registry_updated", self._resolve_input_entities)
+        )
+
+        def _unsub_all():
+            while self._unsub_inputs:
+                self._unsub_inputs.pop()()
+
+        self.async_on_remove(_unsub_all)
+
         last_extra = await self.async_get_last_extra_data()
         if last_extra is not None:
             data = last_extra.as_dict()

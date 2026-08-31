@@ -84,6 +84,44 @@ The critical failure case — a *valid* frame being discarded — never occurred
 The upstream issue tracker has several reports that look like this one, including on other
 Anern units.
 
+### The vSoC estimator finds its settings by unique_id, not by name
+
+This is the fix for the whole vSoC family sitting at `unavailable` / `unknown` while its
+settings are correctly filled in, with nothing in the log.
+
+`DirectBatteryStateOfChargeSensor` built the entity_ids of its six inputs — capacity, sync
+voltage, battery mode, and the three float-deadband controls — by slugifying the device name.
+That guess is only right when HA happens to assign the object_id the name suggests. On the
+install where this was found every entity carried an extra prefix, so **all six guesses
+missed**: the estimator watched entity_ids that did not exist, never saw the capacity, and
+reported `unavailable` forever. Writing the capacity again changed nothing, and neither did
+restarting.
+
+The ids are now resolved from the **entity registry by unique_id**, which this integration
+generates itself, so the answer is definitive. The old guess is kept only as a fallback for
+the moment before an entity is registered.
+
+Three smaller things came with it:
+
+- the listeners moved out of `__init__`, where the registry is not usable yet, into
+  `async_added_to_hass`;
+- they are re-attached whenever the registry changes, so **renaming an entity no longer
+  switches the estimator off** silently;
+- the capacity is read once at startup instead of only being watched for changes — a value
+  already set was invisible until the user touched it again.
+
+⚠️ Careful if you touch this: `discharge_floor` has a unique_id ending in
+`discharge_floor_soc` and an entity_id ending in `vsoc_discharge_floor`. They are not
+interchangeable.
+
+✅ **Confirmed in production** on 2026-09-01. Before: `battery_state_of_charge` and the four
+derived sensors all `unavailable`/`unknown` with capacity set to 100 Ah. After: SoC live and
+the runtime estimates populated (`backup_time_at_current_load` 14.7 h,
+`time_to_discharge_floor` 12.0 h), with the entity_ids left prefixed — which is the point.
+
+Note the estimator starts its Coulomb counter at 100%, so the first reading after enabling it
+is as wrong as the pack is empty; it re-anchors on the first snap-to-100.
+
 ### A `RAW` command in the debug panel
 
 `RAW <devaddr> <devcode> <hex bytes…>` sends bytes straight through the EyBond envelope,

@@ -72,10 +72,14 @@ The NAK itself is the inverter's behaviour, not this integration's: the vendor c
 NAKed on `QPIGS` too, roughly two requests in five. This fix stops a NAK from wiping the
 last known values; it does not stop the inverter from NAKing.
 
-⚠️ **Still under observation.** The root cause was confirmed on six samples and the fix has
-been running since 2026-08-30, but it has not yet been watched through a full sunny day —
-the blips were most frequent around midday, at peak PV. Treat this one as promising rather
-than proven.
+✅ **Confirmed in production** on 2026-08-31, watched from 11:25 to 15:50 at peak PV (974 W).
+Over that window: 28 `QPIGS` cycles sent, 25 valid responses, 3 lost to an empty reply, a
+NAK and a `Connection reset by peer` — and **zero sensors went `unknown`**. The freeze
+engaged twice in the afternoon (14:56:59 and 15:44:23) after both attempts of a cycle
+failed, holding the last good values with nothing visible from outside. Seven rejections
+were logged in total, five on `QPIGS` and two on `QPIWS`.
+
+The critical failure case — a *valid* frame being discarded — never occurred.
 
 The upstream issue tracker has several reports that look like this one, including on other
 Anern units.

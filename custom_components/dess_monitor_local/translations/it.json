@@ -83,7 +83,7 @@
           "eybond_broadcast": "Destinazione del broadcast UDP con cui il server locale si annuncia al dongle.",
           "eybond_announce_ip": "Indirizzo IP comunicato al dongle, facoltativo. Lascia vuoto per il rilevamento automatico.",
           "update_interval": "Ogni quanto interrogare il dispositivo. Valori più bassi significano aggiornamenti più frequenti.",
-          "strict_crc": "Scarta i frame Voltronic/PI18 con CRC non valido invece di provare a decodificarli."
+          "strict_crc": "Scarta i frame con CRC non valido invece di provare a decodificarli. Copre ogni comando, compresi quelli che non hanno un controllo di lunghezza proprio. Attivo di default da anern.6."
         }
       }
     }
@@ -109,7 +109,8 @@
           "listener": "Impostazioni del listener",
           "edit": "Modifica la connessione",
           "migrate_hub": "Converti in hub EyBond",
-          "debug_panel": "Pannello di debug"
+          "debug_panel": "Pannello di debug",
+          "anomaly_log": "Registro anomalie"
         }
       },
       "rescan": {
@@ -173,7 +174,7 @@
           "eybond_broadcast": "Destinazione del broadcast UDP con cui il server locale si annuncia al dongle.",
           "eybond_announce_ip": "Indirizzo IP comunicato al dongle, facoltativo. Lascia vuoto per il rilevamento automatico.",
           "update_interval": "Ogni quanto interrogare il dispositivo. Valori più bassi significano aggiornamenti più frequenti.",
-          "strict_crc": "Scarta i frame Voltronic/PI18 con CRC non valido invece di provare a decodificarli."
+          "strict_crc": "Scarta i frame con CRC non valido invece di provare a decodificarli. Copre ogni comando, compresi quelli che non hanno un controllo di lunghezza proprio. Attivo di default da anern.6."
         }
       },
       "debug_panel": {
@@ -181,6 +182,13 @@
         "description": "Mostra nella barra laterale il pannello di debug in tempo reale, visibile solo agli amministratori. Ha effetto dopo il ricaricamento dell'integrazione.",
         "data": {
           "debug_panel": "Mostra il pannello di debug nella barra laterale"
+        }
+      },
+      "anomaly_log": {
+        "title": "Registro anomalie",
+        "description": "Conserva su disco i rifiuti, i congelamenti e i byte grezzi dei frame corrotti, in config/dess_monitor_local/. A differenza del pannello di debug, che registra solo mentre è aperto, questo cattura gli eventi rari, che sono già spariti quando si va a cercarli. Ha effetto dopo il ricaricamento dell'integrazione.",
+        "data": {
+          "anomaly_log": "Conserva le anomalie su disco"
         }
       }
     }

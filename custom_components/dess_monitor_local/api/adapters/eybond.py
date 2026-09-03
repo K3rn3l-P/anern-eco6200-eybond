@@ -11,6 +11,7 @@ from ..protocols.eybond_dongle import (
     send_eybond_set_command,
     send_eybond_voltronic,
 )
+from ..crc import validate_voltronic_response
 from ..protocols.modbus_rtu import build_write_single_frame, parse_write_response
 from .base import BaseAdapter
 
@@ -50,8 +51,28 @@ class EyBondAdapter(BaseAdapter):
             if self.is_pi18:
                 return decode_pi18_response(command, response) or {}
 
-            # For PI30, decode to ASCII first
+            # For PI30, decode to ASCII first. partition() already drops the
+            # trailing CR, which is exactly what validate_voltronic_response
+            # expects — passing the CR along makes every good frame fail.
             body, _, _ = response.partition(b"\r")
+
+            # The CRC check belongs here, not in the transport. send_eybond_bytes
+            # is shared with Modbus (different CRC — it is the path that writes
+            # the charger priority), with set commands, with PI18 and with the
+            # debug panel's manual send: validating there as Voltronic would
+            # reject every Modbus reply.
+            if self.strict_crc:
+                ok, _payload = validate_voltronic_response(body)
+                if not ok:
+                    # Reported as an error rather than {} so the coordinator
+                    # logs the rejection, retries, and then freezes on the last
+                    # known data. An empty dict would be dropped silently.
+                    _LOGGER.debug(
+                        "EyBond CRC mismatch for %s (%d bytes): %r",
+                        command, len(body), body[:120],
+                    )
+                    return {"error": "CRC mismatch"}
+
             ascii_resp = body.decode("ascii", errors="ignore")
             return decode_direct_response(command, ascii_resp) or {}
         except Exception as err:

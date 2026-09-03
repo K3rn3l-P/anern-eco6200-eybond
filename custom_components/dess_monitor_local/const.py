@@ -38,6 +38,12 @@ CONF_HUB_REVISION = "hub_revision"
 # Defaults ON to preserve the behaviour from before the toggle existed.
 CONF_DEBUG_PANEL = "debug_panel"
 DEFAULT_DEBUG_PANEL = True
+# Persist anomalies (rejections, freezes, captured frames) to disk. On by
+# default: these events are rare, and a diagnostic switched on when you need it
+# always arrives after the event it was meant to explain. The cost is one line
+# written when something goes wrong, not per poll.
+CONF_ANOMALY_LOG = "anomaly_log"
+DEFAULT_ANOMALY_LOG = True
 
 # Supported protocol identifiers
 PROTOCOL_VOLTRONIC = "voltronic"
@@ -112,4 +118,7 @@ DEFAULT_EYBOND_ANNOUNCE_IP = ""
 DEFAULT_UPDATE_INTERVAL = 10
 MIN_UPDATE_INTERVAL = 1
 MAX_UPDATE_INTERVAL = 300
-DEFAULT_STRICT_CRC = False
+# On by default since anern.6: the check is cheap and the failure it catches
+# is silent. Measured on 151 real frames from an ANERN ECO-6200 (1-2 Sep 2026):
+# 142/142 good frames accepted, 9/9 truncated frames rejected.
+DEFAULT_STRICT_CRC = True

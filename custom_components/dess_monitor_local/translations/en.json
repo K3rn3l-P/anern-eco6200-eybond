@@ -83,7 +83,7 @@
           "eybond_broadcast": "UDP broadcast target used to announce the local server to the dongle.",
           "eybond_announce_ip": "Optional IP address advertised to the dongle. Leave empty for auto-detect.",
           "update_interval": "How often to poll the device. Lower values mean more frequent updates.",
-          "strict_crc": "Drop Voltronic/PI18 frames with invalid CRC instead of trying to decode them."
+          "strict_crc": "Drop frames whose CRC does not match instead of trying to decode them. Covers every command, including the ones with no length check of their own. On by default since anern.6."
         }
       }
     }
@@ -109,7 +109,8 @@
           "listener": "Listener settings",
           "edit": "Edit connection",
           "migrate_hub": "Convert to EyBond hub",
-          "debug_panel": "Debug panel"
+          "debug_panel": "Debug panel",
+          "anomaly_log": "Anomaly log"
         }
       },
       "rescan": {
@@ -173,7 +174,7 @@
           "eybond_broadcast": "UDP broadcast target used to announce the local server to the dongle.",
           "eybond_announce_ip": "Optional IP address advertised to the dongle. Leave empty for auto-detect.",
           "update_interval": "How often to poll the device. Lower values mean more frequent updates.",
-          "strict_crc": "Drop Voltronic/PI18 frames with invalid CRC instead of trying to decode them."
+          "strict_crc": "Drop frames whose CRC does not match instead of trying to decode them. Covers every command, including the ones with no length check of their own. On by default since anern.6."
         }
       },
       "debug_panel": {
@@ -181,6 +182,13 @@
         "description": "Show the admin-only live debug panel in the sidebar. Applied after the integration reloads.",
         "data": {
           "debug_panel": "Show debug panel in sidebar"
+        }
+      },
+      "anomaly_log": {
+        "title": "Anomaly log",
+        "description": "Keep rejections, freezes and the raw bytes of corrupt frames on disk, under config/dess_monitor_local/. Unlike the debug panel, which only records while it is open, this captures the rare events that are gone by the time anyone looks. Applied after the integration reloads.",
+        "data": {
+          "anomaly_log": "Persist anomalies to disk"
         }
       }
     }

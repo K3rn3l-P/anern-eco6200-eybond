@@ -47,6 +47,7 @@ from urllib.parse import parse_qs, urlparse
 from ...const import PROTOCOL_PI18
 from ...diag_hub import active as _diag
 from ...diag_hub import publish as _diag_pub
+from ...frame_log import record as _record_frame
 from ..crc import build_pi30_frame
 from ..decoders.pi18 import build_request_frame
 from .eybond_discovery import EybondRegistry
@@ -898,6 +899,11 @@ class EybondManager:
                 )
                 return None
 
+        # This transport carries no CRC of its own, so a mangled frame is only
+        # ever caught downstream by the decoders' length checks — by which point
+        # the bytes are gone. Keep them: they are the only evidence a truncation
+        # fix can be written from.
+        _record_frame(context or "frame", raw, crc_valid=None)
         _LOGGER.debug(
             "EyBond RX-payload %s devaddr=%d (%d bytes raw)",
             context or "frame", devaddr, len(raw),

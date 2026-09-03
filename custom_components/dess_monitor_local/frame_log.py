@@ -35,8 +35,12 @@ def _safe_ascii(b: bytes) -> str:
     )
 
 
-def record(command: str, raw_bytes: bytes, crc_valid: bool) -> None:
-    """Append one frame snapshot to the per-command ring buffer."""
+def record(command: str, raw_bytes: bytes, crc_valid: bool | None) -> None:
+    """Append one frame snapshot to the per-command ring buffer.
+
+    ``crc_valid`` is ``None`` for transports that carry no CRC (EyBond), so a
+    reader can tell "not checked" from "checked and failed".
+    """
     buf = _FRAMES.get(command)
     if buf is None:
         buf = deque(maxlen=_MAX_FRAMES_PER_COMMAND)

@@ -38,12 +38,21 @@ class TestDecodeQpigs:
         # Must be int-parseable now (the bug was int('110s', 2) crashing).
         assert int(d["device_status_bits_b10_b8"], 2) == 6
 
-    def test_short_frame_truncates_gracefully(self):
-        # zip() stops at the shorter sequence — missing trailing fields
-        # simply aren't present, no exception.
+    def test_short_frame_is_rejected(self):
+        # A truncated frame is rejected, not partially decoded. Decoding what
+        # arrived would publish a handful of real readings next to silently
+        # missing ones, and the coordinator would count the read as a success.
+        # Rejecting lets it retry and then freeze on the last known data.
         d = voltronic.decode_qpigs("239.3 50.0 230.6")
+        assert "error" in d
+        assert "frame too short" in d["error"]
+        assert "grid_voltage" not in d
+
+    def test_full_frame_still_decodes(self):
+        # The length guard must not reject a well-formed frame.
+        d = voltronic.decode_qpigs(_QPIGS)
+        assert "error" not in d
         assert d["grid_voltage"] == "239.3"
-        assert "battery_discharge_current" not in d
 
 
 class TestDecodeQpiws:
@@ -82,12 +91,24 @@ class TestDecodeQpiws:
         d = voltronic.decode_qpiws(raw)
         assert d["overload"] is True
 
-    def test_short_response_defaults_false(self):
-        # Fewer bits than the field map -> missing bits default to False.
-        # "0010": index 2 = bus_over = '1'.
+    def test_short_response_is_rejected_not_padded(self):
+        # Padding the tail with False is not a degraded reading of an alarm —
+        # it is the assertion that the alarm is absent, from a frame that never
+        # said so. Unlike a truncated QPIGS, which blanks its sensors visibly,
+        # this used to fail closed and silent: a genuine fault read as clear on
+        # a binary_sensor that stayed reassuringly "off".
+        # Seen in production on 2 Sep 2026: "4 of 32 status bits".
         d = voltronic.decode_qpiws("0010")
-        assert d["bus_over"] is True       # index 2
-        assert d["overload"] is False      # index 16, beyond input
+        assert "error" in d
+        assert "frame too short" in d["error"]
+        assert "bus_over" not in d
+
+    def test_exactly_mapped_width_is_accepted(self):
+        # 32 bits is what this inverter sends — nothing to spare, so the guard
+        # must accept it rather than demand more.
+        d = voltronic.decode_qpiws(self._bits(bus_over=True))
+        assert "error" not in d
+        assert d["bus_over"] is True
 
 
 class TestDecodeQmod:

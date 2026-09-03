@@ -160,6 +160,14 @@ _QPIWS_FIELDS = (
     "_reserved_31",                   # a31
 )
 
+_QPIWS_MIN_BITS = len(_QPIWS_FIELDS)
+"""Status bits a QPIWS frame must carry to be usable.
+
+Measured on the Anern ECO6200 (1 Sep 2026): every frame is 36 raw bytes —
+``(`` + 32 bits + 2 CRC + CR — so the inverter sends exactly one bit per
+mapped field, with nothing to spare.
+"""
+
 
 def decode_qpiws(ascii_str: str) -> dict:
     """Decode PI30 QPIWS — Warning Status — into a flat dict of named
@@ -167,16 +175,26 @@ def decode_qpiws(ascii_str: str) -> dict:
 
     Tolerant to:
       * leading/trailing whitespace
-      * variable response length (32 vs 36 vs 28 bits across firmwares)
+      * extra bits beyond the known mapping (silently dropped)
       * stray non-0/1 chars (e.g. CRC bleed-through, the same b10_b8
         artefact noted in TECH_DEBT.md)
 
-    Bits beyond the known mapping are silently dropped; missing bits
-    default to ``False``.
+    A frame carrying FEWER bits than the mapping is rejected rather than
+    padded. Padding the tail with False is not a degraded reading of an
+    alarm — it is the assertion that the alarm is absent, from a frame
+    that never said so. Unlike a truncated QPIGS, which blanks its
+    sensors visibly, this one fails closed and silent: a genuine fault
+    reads as clear, on a binary_sensor that stays reassuringly "off".
+    See docs/impianto-solare/dess-local-checklist-verifica.md
     """
     bits = "".join(c for c in ascii_str if c in "01")
+    if len(bits) < _QPIWS_MIN_BITS:
+        return {
+            "error": f"QPIWS frame too short: {len(bits)} of "
+                     f"{_QPIWS_MIN_BITS} status bits"
+        }
     return {
-        name: (bool(int(bits[i])) if i < len(bits) else False)
+        name: bool(int(bits[i]))
         for i, name in enumerate(_QPIWS_FIELDS)
     }
 

@@ -122,6 +122,70 @@ the runtime estimates populated (`backup_time_at_current_load` 14.7 h,
 Note the estimator starts its Coulomb counter at 100%, so the first reading after enabling it
 is as wrong as the pack is empty; it re-anchors on the first snap-to-100.
 
+### Corrupt frames are rejected, on every command
+
+The decoders only check length where a section has a known field count, which left `QMOD`,
+`QPIGS2`, `QPIRI` and `QFWS` unprotected — and `QMOD` is what a controller reads to decide the
+operating regime. A CRC covers all of them without knowing anything about their shape, so
+**Strict CRC validation is now on by default** and is finally wired on the EyBond transport,
+where the option previously existed but did nothing at all.
+
+The check lives in the adapter, not the transport: `send_eybond_bytes` is shared with Modbus (a
+different CRC — it is the path that writes the charger priority), with set commands and with
+PI18, so validating there would reject every Modbus reply.
+
+✅ **Measured on 151 frames captured from a live plant** (1–3 Sep 2026): 142/142 good frames
+accepted, 10/10 truncated frames rejected, no false positives either way. Every truncated frame
+ends in a high byte (`0xff`/`0xfe`/`0xf3`/`0xf0`) where the CR should be and cuts at an arbitrary
+offset — a framing error on the inverter-to-dongle serial leg, not a parsing bug.
+
+⚠️ An existing config entry keeps its stored value, so on an upgrade the option has to be switched
+on once from **Configure → Connection**.
+
+A `QPIWS` frame carrying fewer than 32 status bits is rejected too, instead of being padded with
+`False`. Padding is not a degraded reading of an alarm — it is the assertion that the alarm is
+absent, from a frame that never said so, on a `binary_sensor` that stays reassuringly `off`.
+Caught its first real case on 2 Sep 2026: `4 of 32 status bits`.
+
+### Failures are recorded instead of vanishing
+
+Three quarters of all failed reads used to leave no trace. The transport returns `None` on a write
+failure, a reply timeout or a lost session; the adapter turned that into an empty dict, and the
+coordinator dropped it without logging anything. Two days of capture: 88 freezes imply at least
+176 failed attempts, of which 45 were logged and 0 were exceptions.
+
+Those now emit a structured event, and so do rejections, freezes and unavailability. With **Anomaly
+log** enabled (default) they are written to `config/dess_monitor_local/` as JSONL, together with a
+dump of the raw frame ring for the ones whose cause is in the bytes — the ring lives in RAM and
+scrolls in minutes, so it is captured at the moment of the anomaly.
+
+Anomalies travel on a channel separate from the panel's live stream, so recording them does **not**
+switch on the per-frame instrumentation: the hot path stays free when no panel is open.
+
+### Anomaly counters as entities
+
+Seven counters plus a "last event" sensor, one per kind: NAKs, truncated frames, CRC failures,
+no-response, transport errors, freezes and sections gone dark. Each carries a `per_command`
+breakdown, and they are cumulative across restarts — a counter that resets on reboot cannot answer
+the only question it exists for. Being entities they are recorded, so they graph and can drive an
+automation, which the JSONL cannot.
+
+The rare kinds also fire a `dess_monitor_local_anomaly` event on the HA bus.
+
+### An Anomalies window in the debug panel
+
+Two exclusive views. **Live** is the existing stream, unchanged. **Anomalies** reads the history
+from disk and shows incidents rather than raw events — one dropped session fails every command
+queued behind it, so 142 events were 97 actual incidents on the real capture. Captured frames can
+be opened inline, with the terminating byte flagged.
+
+### Sensors report whether their section is frozen
+
+`stale` and `stale_cycles` on every typed sensor. On a failed read this integration returns the
+last known value, so the entity is rewritten and `last_reported` moves forward: from the outside a
+frozen section looks perfectly fresh, and a consumer measuring staleness from timestamps cannot
+tell the difference.
+
 ### A `RAW` command in the debug panel
 
 `RAW <devaddr> <devcode> <hex bytes…>` sends bytes straight through the EyBond envelope,

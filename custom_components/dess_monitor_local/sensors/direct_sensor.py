@@ -105,6 +105,28 @@ class DirectTypedSensorBase(DirectSensorBase):
         self._attr_unique_id = f"{self._inverter_device.inverter_id}_direct_{suffix}"
         self._attr_name = f"{self._inverter_device.name} Direct {name_part}"
 
+    @property
+    def extra_state_attributes(self):
+        """Expose whether this section's reading is frozen.
+
+        A frozen section keeps publishing its last known value, so nothing
+        about the state or its timestamps distinguishes it from a live one.
+        Consumers that need to trust the value — a control loop deciding on
+        the inverter's operating mode, say — have no other way to tell.
+        Merged with, not replacing, whatever a subclass already set.
+        """
+        # getattr, not direct access: Entity does not define this until a
+        # subclass sets it, and HA's CachedProperties metaclass mangles the
+        # name, so touching it directly raises AttributeError on every entity
+        # that never set one — which is most of them.
+        attrs = dict(getattr(self, "_attr_extra_state_attributes", None) or {})
+        stale = self.coordinator.section_failures(
+            self._inverter_device.inverter_id, self.data_section
+        )
+        attrs["stale_cycles"] = stale
+        attrs["stale"] = stale > 0
+        return attrs
+
     @callback
     def _handle_coordinator_update(self) -> None:
         section = self.data.get(self.data_section, {})

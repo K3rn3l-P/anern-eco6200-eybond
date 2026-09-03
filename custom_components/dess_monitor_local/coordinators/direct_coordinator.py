@@ -30,6 +30,23 @@ from custom_components.dess_monitor_local.coordinators.failure_tracker import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _classify(error: str | None) -> str:
+    """Name the kind of rejection.
+
+    Kept distinct rather than lumped into one "rejected" bucket: a NAK is the
+    inverter declining, a truncation is the serial leg mangling the frame, and
+    a CRC failure is the frame arriving whole but wrong. They have different
+    causes and different fixes, so a counter that merges them hides which one
+    is actually happening.
+    """
+    text = str(error or "")
+    if "CRC" in text:
+        return "crc"
+    if "frame too short" in text:
+        return "truncated"
+    return "rejected"
+
+
 class DirectCoordinator(DataUpdateCoordinator):
     """My custom coordinator."""
     devices = []
@@ -49,6 +66,18 @@ class DirectCoordinator(DataUpdateCoordinator):
     # implement them. A NAK from these is the normal answer, so it must NOT
     # count as a failed read — otherwise every cycle burns a pointless retry.
     _NAK_EXPECTED = ("QPIGS2", "QFWS")
+    # ...but only a *refusal* is the normal answer. A corrupt frame from those
+    # same commands is not, and used to be invisible: the old test skipped the
+    # decoder's error entirely for them, so a truncated QPIGS2/QFWS counted as
+    # a successful read and left no log line. These markers are what an
+    # unimplemented command answers with; anything else (a short frame, a CRC
+    # mismatch) is corruption and must be rejected like everywhere else.
+    _UNSUPPORTED_MARKERS = (
+        "NAK response received",
+        "null response received",
+        "empty response",
+        "empty PI18 payload",
+    )
     # Per-command poll cadence (poll every Nth cycle; carry forward in between).
     # Live telemetry every cycle keeps values fresh and the per-cycle command
     # count tiny (fits a cycling dongle's brief window → far fewer failures);
@@ -61,6 +90,7 @@ class DirectCoordinator(DataUpdateCoordinator):
         ("QFWS", "qfws", 3),      # warnings/faults (PI18)
         ("QPIRI", "qpiri", 12),   # ratings/nameplate — essentially static
     )
+    _SECTION_TO_CMD = {section: cmd for cmd, section, _ in _CMD_SCHEDULE}
     # Per-device poll bound, applied ONLY with multiple devices (an EyBond hub
     # with several children). One stuck/half-attentive dongle answering FC=4
     # slowly used to drag the whole-hub gather past the 120s cycle cap, which
@@ -141,6 +171,51 @@ class DirectCoordinator(DataUpdateCoordinator):
         self._targets = list(targets)
         self.devices = list(targets)
 
+    @staticmethod
+    def _anomaly(kind: str, key: str, cmd: str, **extra) -> None:
+        """Record one anomaly, if anything is listening or persisting.
+
+        Deliberately separate from the log lines next to each call site: those
+        are matched character for character by an external monitor, so they
+        must not move, and a structured event is what a consumer should be
+        reading anyway. A renamed field breaks loudly; a renamed log message
+        does not.
+        """
+        if not diag_hub.anomaly_active():
+            return
+        diag_hub.publish_anomaly(
+            {"t": "anomaly", "kind": kind, "dev": key, "cmd": cmd, **extra}
+        )
+
+    def section_failures(self, device_id: str, section: str) -> int:
+        """Consecutive failed reads for one section, 0 when it is fresh.
+
+        Exists because freshness cannot be inferred from the outside. On a
+        failed read this coordinator returns the *last known* data as the
+        result of the cycle, so the entities are rewritten with the old value
+        and their last_reported timestamp moves forward. A consumer watching
+        last_reported therefore sees a frozen section as perfectly fresh —
+        which is exactly what a downstream guard was doing, and why it never
+        fired. The count is the only honest answer, and only this side has it.
+        """
+        cmd = self._SECTION_TO_CMD.get(section)
+        if cmd is None:
+            return 0
+        counts = getattr(self._failures, "_counts", {}) or {}
+        return (counts.get(device_id) or {}).get(cmd, 0)
+
+    def _is_rejected(self, cmd: str, error: str | None) -> bool:
+        """True when the decoder's error means the frame is unusable.
+
+        Commands in _NAK_EXPECTED are allowed to answer "not implemented" — but
+        nothing more. Corruption is rejected for every command, including them.
+        """
+        if not error:
+            return False
+        if cmd in self._NAK_EXPECTED:
+            return not any(m in error for m in self._UNSUPPORTED_MARKERS)
+        return True
+
     def _child_failure_summary(self) -> dict:
         """Per-child ``"ok"`` / ``"fail:N"`` for the debug panel's cycle event.
 
@@ -215,22 +290,43 @@ class DirectCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug(
                         "%s/%s attempt %d raised %r", key, cmd, attempt + 1, err
                     )
+                    self._anomaly(
+                        "raised", key, cmd, attempt=attempt + 1, detail=repr(err)
+                    )
                     result = None
                 if result:
-                    if cmd not in self._NAK_EXPECTED and result.get("error"):
+                    if self._is_rejected(cmd, result.get("error")):
                         # A NAK is a well-formed frame carrying no data. Without
                         # this it counts as a successful read, the freeze in
                         # FailureTracker never engages, and the section is blanked
                         # for a whole cycle.
                         # See docs/impianto-solare/dess-local-nak-qpigs.md
+                        error = result.get("error")
                         _LOGGER.debug(
                             "%s/%s attempt %d rejected: %s",
-                            key, cmd, attempt + 1, result.get("error"),
+                            key, cmd, attempt + 1, error,
+                        )
+                        self._anomaly(
+                            _classify(error), key, cmd,
+                            attempt=attempt + 1, detail=error,
                         )
                         result = None
                     else:
                         self._failures.on_success(key, cmd)
                         return result
+                else:
+                    # The quiet path, and by far the most common one. The
+                    # transport returns None on a write failure, a reply
+                    # timeout or a lost session; the adapter turns that into an
+                    # empty dict, and `if result:` used to drop it here without
+                    # a word — no "rejected", no "raised". Two days of live
+                    # capture: 88 freezes imply at least 176 failed attempts,
+                    # of which only 45 left any trace at all.
+                    _LOGGER.debug(
+                        "%s/%s attempt %d got no usable response",
+                        key, cmd, attempt + 1,
+                    )
+                    self._anomaly("no_response", key, cmd, attempt=attempt + 1)
                 if attempt == 0:
                     await asyncio.sleep(self._RETRY_DELAY_S)
 
@@ -242,11 +338,16 @@ class DirectCoordinator(DataUpdateCoordinator):
                     "%s/%s read failed (consecutive=%d/%d); freezing on last known data",
                     key, cmd, count, self._MAX_CONSECUTIVE_FAILURES,
                 )
+                self._anomaly(
+                    "freeze", key, cmd,
+                    consecutive=count, limit=self._MAX_CONSECUTIVE_FAILURES,
+                )
             elif outcome is FailureOutcome.UNAVAILABLE:
                 _LOGGER.warning(
                     "%s/%s failed %d times in a row; flipping to unavailable",
                     key, cmd, count,
                 )
+                self._anomaly("unavailable", key, cmd, consecutive=count)
             return data
 
         try:

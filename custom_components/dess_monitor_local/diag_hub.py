@@ -11,8 +11,17 @@ Single-tenant integration, so a module-level singleton is fine (mirrors
 ``frame_log``).
 
 Event shape is ``{"t": <kind>, "ts": <epoch_s>, ...}`` where ``t`` is one of
-``frame`` / ``session`` / ``cycle`` / ``dongles``. ``ts`` is filled in by
-``publish`` if the producer didn't set it.
+``frame`` / ``session`` / ``cycle`` / ``dongles`` / ``anomaly``. ``ts`` is
+filled in by ``publish`` if the producer didn't set it.
+
+Anomalies travel on a second, deliberately separate channel. The hot-path
+events above are worth recording only while somebody is watching, but an
+anomaly is rare and is exactly what you want to have been recorded *before*
+you started looking — a diagnostic that switches on when you need it always
+arrives after the event it was supposed to explain. So ``publish_anomaly``
+also feeds any persistent sink, and ``anomaly_active`` is true when either a
+panel or a sink is attached, while ``active`` still guards the hot path alone
+and stays false when only a sink is listening.
 """
 from __future__ import annotations
 
@@ -24,6 +33,7 @@ _RING_MAX = 1000
 # Module-level singletons.
 _ring: deque[dict] = deque(maxlen=_RING_MAX)
 _subscribers: set = set()  # set[asyncio.Queue[dict]]
+_anomaly_sinks: set = set()  # set[Callable[[dict], None]]
 
 
 def active() -> bool:
@@ -53,6 +63,46 @@ def publish(event: dict) -> None:
             pass
 
 
+def anomaly_active() -> bool:
+    """True when an anomaly would be recorded by somebody.
+
+    Distinct from ``active``: a persistent sink listens for anomalies without
+    switching on the hot-path instrumentation.
+    """
+    return bool(_subscribers) or bool(_anomaly_sinks)
+
+
+def publish_anomaly(event: dict) -> None:
+    """Record an anomaly: to the ring, to live panels, and to every sink.
+
+    Unlike ``publish`` this is not a no-op without subscribers — the sink is
+    the whole point. A failing sink must never break the caller: this runs on
+    the polling path, and an unwritable disk is not a reason to stop polling.
+    """
+    event.setdefault("ts", round(time.time(), 3))
+    event.setdefault("t", "anomaly")
+    _ring.append(event)
+    for q in list(_subscribers):
+        try:
+            q.put_nowait(event)
+        except Exception:  # noqa: BLE001 — QueueFull / closed: drop for this sub
+            pass
+    for sink in list(_anomaly_sinks):
+        try:
+            sink(event)
+        except Exception:  # noqa: BLE001 — a broken sink must not stop polling
+            pass
+
+
+def subscribe_anomalies(sink) -> None:
+    """Attach a persistent anomaly sink (a callable taking the event dict)."""
+    _anomaly_sinks.add(sink)
+
+
+def unsubscribe_anomalies(sink) -> None:
+    _anomaly_sinks.discard(sink)
+
+
 def subscribe(queue) -> None:
     """Register a subscriber queue (created by the WebSocket handler)."""
     _subscribers.add(queue)
@@ -69,6 +119,7 @@ def recent(limit: int | None = None) -> list[dict]:
 
 
 def clear() -> None:
-    """Drop the ring and all subscribers (integration unload)."""
+    """Drop the ring, all subscribers and all sinks (integration unload)."""
     _ring.clear()
     _subscribers.clear()
+    _anomaly_sinks.clear()

@@ -30,6 +30,9 @@ from .sensors.direct_energy_sensors import (
 )
 
 
+_ANOMALY_SENSORS = "dess_monitor_local_anomaly_sensors_added"
+
+
 async def async_setup_entry(
         hass: HomeAssistant,
         config_entry: HubConfigEntry,
@@ -39,6 +42,16 @@ async def async_setup_entry(
     hub = config_entry.runtime_data
     new_devices = []
     entry_protocol = config_entry.options.get(CONF_PROTOCOL)
+
+    # The anomaly counters are global, not per device: they count events on
+    # the diagnostic channel, which is a module-level singleton. Creating them
+    # once per entry would give duplicate entities on a hub + device setup and
+    # double every count.
+    if not hass.data.get(_ANOMALY_SENSORS):
+        from .sensors.anomaly_sensor import create_anomaly_sensors
+
+        hass.data[_ANOMALY_SENSORS] = True
+        new_devices.extend(create_anomaly_sensors())
 
     # Hub entries get a diagnostic device showing discovered dongles, so the
     # integration is visibly "working" even before any child is configured.

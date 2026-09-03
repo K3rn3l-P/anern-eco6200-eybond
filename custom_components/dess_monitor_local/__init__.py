@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -13,8 +14,16 @@ from custom_components.dess_monitor_local.api.protocols.eybond_dongle import (
 )
 from custom_components.dess_monitor_local.coordinators.direct_coordinator import DirectCoordinator
 
-from . import debug_panel, eybond_hub, hub
-from .const import CONF_ENTRY_KIND, ENTRY_KIND_DEVICE, ENTRY_KIND_EYBOND_HUB
+from . import anomaly_log, debug_panel, eybond_hub, hub
+from .const import (
+    CONF_ANOMALY_LOG,
+    CONF_ENTRY_KIND,
+    DEFAULT_ANOMALY_LOG,
+    ENTRY_KIND_DEVICE,
+    ENTRY_KIND_EYBOND_HUB,
+)
+
+_ANOMALY_LOG = "dess_monitor_local_anomaly_log"
 
 # List of platforms to support. There should be a matching .py file for each,
 # eg <cover.py> and <sensor.py>
@@ -43,6 +52,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: HubConfigEntry) -> bool:
     # Show/hide the admin-only live debug panel to match the hub option
     # (Configure -> Debug panel). Re-evaluated on every setup/reload.
     await debug_panel.async_apply_debug_panel(hass)
+
+    # Persist anomalies for as long as any entry asks for it. Idempotent, like
+    # the panel above: re-evaluated on every setup so toggling the option and
+    # reloading is enough.
+    await _async_apply_anomaly_log(hass, entry)
 
     if _entry_kind(entry) == ENTRY_KIND_EYBOND_HUB:
         # Hub entry: one listener, many PN-routed children built from the
@@ -83,6 +97,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Drop the diagnostic frame buffer too — keeps memory clean across
     # reloads and avoids leaking stale frames from a previous device URI.
     frame_log.clear()
+    hass.data.pop("dess_monitor_local_anomaly_sensors_added", None)
+    log = hass.data.pop(_ANOMALY_LOG, None)
+    if log is not None:
+        log.async_stop()
     # Free the EyBond TCP listener / UDP announcer so a reload can rebind
     # the port cleanly. Hub entries shut down only their own listener (and
     # persist the registry); legacy single-device entries drain all.
@@ -92,6 +110,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await shutdown_all_eybond_managers()
 
     return unload_ok
+
+
+async def _async_apply_anomaly_log(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Start or stop the on-disk anomaly log to match the option."""
+    wanted = entry.options.get(CONF_ANOMALY_LOG, DEFAULT_ANOMALY_LOG)
+    running = hass.data.get(_ANOMALY_LOG)
+    if wanted and running is None:
+        log = anomaly_log.AnomalyLog(
+            hass, Path(hass.config.path(anomaly_log.FOLDER))
+        )
+        await log.async_start()
+        await log.async_purge()
+        hass.data[_ANOMALY_LOG] = log
+    elif not wanted and running is not None:
+        running.async_stop()
+        hass.data.pop(_ANOMALY_LOG, None)
 
 
 async def _update_listener(hass: HomeAssistant, entry: ConfigEntry):

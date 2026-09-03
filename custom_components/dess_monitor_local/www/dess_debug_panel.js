@@ -37,6 +37,8 @@ class DessDebugPanel extends HTMLElement {
     this._renderScheduled = false;
     this._pending = new Map(); // `${pn}:${tid}` -> tx ts (latency matching)
     this._lat = new Map(); // pn -> [ms,...] rolling
+    this._anom = null; // last read of the persisted anomaly history
+    this._anomLoaded = false; // read lazily, the first time the tab is opened
     this.attachShadow({ mode: "open" });
   }
 
@@ -160,17 +162,43 @@ class DessDebugPanel extends HTMLElement {
         .right { display:flex; flex-direction:column; gap:10px; min-height:0; }
         .cyc { font-family:ui-monospace,monospace; font-size:11px; overflow:auto; flex:1; }
         pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-all; font-size:11px; color:#9d9; }
+        [hidden] { display:none !important; }
+        .tabs { display:flex; gap:4px; }
+        .tab { background:#1c1c1c; border:1px solid #2a2a2a; color:#9aa; padding:3px 12px; }
+        .tab.on { background:#2c2c2c; color:var(--primary-text-color,#e1e1e1); border-color:#3a3a3a; }
+        .view { display:flex; flex-direction:column; gap:10px; min-height:0; flex:1; }
+        .counts { display:flex; gap:6px; flex-wrap:wrap; }
+        .count { background:#181818; border:1px solid #2a2a2a; border-radius:6px; padding:4px 10px; font-size:12px; }
+        .count b { font-size:15px; display:block; }
+        .ep { border-bottom:1px solid #2a2a2a; padding:5px 4px; }
+        .ep:hover { background:#1c1c1c; }
+        .ep .when { color:#888; margin-right:8px; }
+        .ep .tag { font-size:11px; padding:1px 6px; border-radius:8px; background:#242424; margin-right:4px; }
+        .ep .n { color:#ffb74d; }
+        .dump { cursor:pointer; padding:4px; border-bottom:1px solid #2a2a2a; font-size:11px; }
+        .dump:hover { background:#1c1c1c; }
+        .frame { border-bottom:1px solid #222; padding:4px 0; }
+        .frame .bad { color:#e57373; }
       </style>
       <div class="wrap">
         <div class="hdr">
           <h2>DESS Debug</h2>
+          <span class="tabs">
+            <button id="tab-live" class="tab on">Live</button>
+            <button id="tab-anom" class="tab">Anomalies</button>
+          </span>
           <span id="hdrstats" class="pill">connecting…</span>
-          <span class="ctrl">
+          <span class="ctrl" id="ctrl-live">
             <input id="filter" placeholder="filter (pn / cmd / hex / text)" size="26"/>
             <button id="pause">Pause</button>
             <button id="clear">Clear</button>
           </span>
+          <span class="ctrl" id="ctrl-anom" hidden>
+            <button id="anom-refresh">Refresh</button>
+            <span id="anom-when" class="muted"></span>
+          </span>
         </div>
+        <div id="view-live" class="view">
         <table id="dongletbl"><thead><tr>
           <th>PN</th><th>Name</th><th>Status</th><th>Proto</th><th>Addr</th><th>Peer</th><th>Last seen</th><th>Latency</th><th>On</th>
         </tr></thead><tbody id="dongles"></tbody></table>
@@ -193,6 +221,27 @@ class DessDebugPanel extends HTMLElement {
             </div>
           </div>
         </div>
+        </div>
+
+        <div id="view-anomalies" class="view" hidden>
+          <div id="anom-counts" class="counts"></div>
+          <div class="grid">
+            <div class="card">
+              <h3><span>Incidents</span><span id="anom-sub" class="muted"></span></h3>
+              <div id="anom-eps" class="log"></div>
+            </div>
+            <div class="right">
+              <div class="card" style="flex:0 0 auto; max-height:34%">
+                <h3>Captured frames</h3>
+                <div id="anom-dumps" class="cyc"></div>
+              </div>
+              <div class="card" style="flex:1 1 auto">
+                <h3><span>Bytes</span><span id="anom-dumpname" class="muted"></span></h3>
+                <div id="anom-frames" class="log"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>`;
     const f = this.shadowRoot.getElementById("filter");
     f.addEventListener("input", () => { this._filter = f.value.toLowerCase(); this._renderEvents(); });
@@ -203,6 +252,27 @@ class DessDebugPanel extends HTMLElement {
       this._events = []; this._cycles = []; this._renderEvents(); this._renderCycles();
     });
     this.shadowRoot.getElementById("send").addEventListener("click", () => this._send());
+    this.shadowRoot.getElementById("tab-live")
+      .addEventListener("click", () => this._showTab("live"));
+    this.shadowRoot.getElementById("tab-anom")
+      .addEventListener("click", () => this._showTab("anom"));
+    this.shadowRoot.getElementById("anom-refresh")
+      .addEventListener("click", () => this._loadAnomalies());
+  }
+
+  // The two views are deliberately exclusive. Live is a fast, noisy stream you
+  // watch while poking at something; Anomalies is a status board you read at a
+  // glance. Stacked on one screen they make each other unreadable.
+  _showTab(which) {
+    const live = which === "live";
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    $("view-live").hidden = !live;
+    $("view-anomalies").hidden = live;
+    $("ctrl-live").hidden = !live;
+    $("ctrl-anom").hidden = live;
+    $("tab-live").classList.toggle("on", live);
+    $("tab-anom").classList.toggle("on", !live);
+    if (!live && !this._anomLoaded) this._loadAnomalies();
   }
 
   _renderHeader() {
@@ -349,6 +419,109 @@ class DessDebugPanel extends HTMLElement {
     } catch (err) {
       out.textContent = "error: " + (err && err.message ? err.message : JSON.stringify(err));
     }
+  }
+  async _loadAnomalies() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    if (!this._hass) return;
+    try {
+      const r = await this._hass.connection.sendMessagePromise({
+        type: "dess_monitor_local/diag/anomalies",
+      });
+      this._anom = r;
+      this._anomLoaded = true;
+      $("anom-when").textContent = "read " + new Date().toLocaleTimeString();
+      this._renderAnomalies();
+    } catch (e) {
+      $("anom-eps").innerHTML = `<div class="muted">could not read: ${e}</div>`;
+    }
+  }
+
+  _renderAnomalies() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const a = this._anom;
+    if (!a) return;
+    const s = a.summary || {};
+
+    // Incidents first and events second, on purpose: one dropped session
+    // fails every command queued behind it, so the raw event count reads
+    // far worse than the plant actually is.
+    const kinds = Object.entries(s.by_kind || {})
+      .sort((x, y) => y[1] - x[1])
+      .map(([k, v]) => `<span class="count"><b>${v}</b>${k}</span>`)
+      .join("");
+    const cmds = Object.entries(s.by_cmd || {})
+      .sort((x, y) => y[1] - x[1])
+      .map(([k, v]) => `<span class="count"><b>${v}</b>${k}</span>`)
+      .join("");
+    $("anom-counts").innerHTML =
+      `<span class="count"><b>${s.episodes ?? 0}</b>incidents</span>` +
+      `<span class="count"><b>${s.events ?? 0}</b>events</span>` +
+      kinds + `<span class="count muted">&nbsp;</span>` + cmds;
+
+    const eps = a.episodes || [];
+    $("anom-sub").textContent = eps.length ? `${eps.length} shown, newest first` : "";
+    $("anom-eps").innerHTML = eps.length
+      ? eps.map((ep) => {
+          const when = ep.ts ? new Date(ep.ts * 1000).toLocaleString() : "—";
+          const many = ep.events.length > 1
+            ? `<span class="n">×${ep.events.length}</span> ` : "";
+          const tags = ep.events.map((e) =>
+            `<span class="tag">${e.kind ?? "?"}:${e.cmd ?? "?"}` +
+            (e.consecutive ? ` ${e.consecutive}/${e.limit ?? "?"}` : "") +
+            `</span>`).join("");
+          const detail = ep.events.map((e) => e.detail).filter(Boolean)[0];
+          return `<div class="ep"><span class="when">${when}</span>${many}${tags}` +
+                 (detail ? `<div class="muted">${detail}</div>` : "") + `</div>`;
+        }).join("")
+      : `<div class="muted">Nothing recorded yet. That is a result too.</div>`;
+
+    const dumps = a.dumps || [];
+    $("anom-dumps").innerHTML = dumps.length
+      ? dumps.map((d) =>
+          `<div class="dump" data-name="${d.name}">${d.name}` +
+          `<span class="muted"> ${(d.size / 1024).toFixed(1)} kB</span></div>`).join("")
+      : `<div class="muted">No captured frames.</div>`;
+    this.shadowRoot.querySelectorAll(".dump").forEach((el) =>
+      el.addEventListener("click", () => this._openDump(el.dataset.name)));
+  }
+
+  async _openDump(name) {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    $("anom-dumpname").textContent = name;
+    $("anom-frames").innerHTML = `<div class="muted">reading…</div>`;
+    try {
+      const r = await this._hass.connection.sendMessagePromise({
+        type: "dess_monitor_local/diag/anomaly_dump", name,
+      });
+      if (r.error) {
+        $("anom-frames").innerHTML = `<div class="bad">${r.error}</div>`;
+        return;
+      }
+      const frames = Object.values(r.frames || {}).flat();
+      $("anom-frames").innerHTML = frames.length
+        ? frames.map((f) => {
+            // A good frame ends in CR. Every truncated one captured so far
+            // ends in a high byte instead, and cuts at an arbitrary offset —
+            // a framing error on the serial leg, not a parsing bug.
+            const hex = (f.raw_hex || "").trim().split(/\s+/);
+            const last = hex[hex.length - 1];
+            const cut = last && last.toLowerCase() !== "0d";
+            const when = f.timestamp ? f.timestamp.replace("T", " ").slice(0, 19) : "";
+            return `<div class="frame">` +
+              `<span class="ts">${when}</span>` +
+              `<span class="${cut ? "bad" : "ok"}">${f.byte_count} B` +
+              (cut ? ` — cut, ends 0x${last}` : "") + `</span>` +
+              `<div class="asc">${this._esc(f.raw_ascii || "")}</div>` +
+              `<div class="muted">${f.raw_hex || ""}</div></div>`;
+          }).join("")
+        : `<div class="muted">empty dump</div>`;
+    } catch (e) {
+      $("anom-frames").innerHTML = `<div class="bad">${e}</div>`;
+    }
+  }
+
+  _esc(t) {
+    return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 }
 

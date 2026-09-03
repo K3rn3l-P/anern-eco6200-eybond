@@ -21,6 +21,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_AGENT_DEVICE_ID,
+    CONF_ANOMALY_LOG,
     CONF_DEBUG_PANEL,
     CONF_DEVICE,
     CONF_ENTRY_KIND,
@@ -39,6 +40,7 @@ from .const import (
     CONF_TRANSPORT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_AGENT_PORT,
+    DEFAULT_ANOMALY_LOG,
     DEFAULT_DEBUG_PANEL,
     DEFAULT_EYBOND_ANNOUNCE_IP,
     DEFAULT_EYBOND_BIND_HOST,
@@ -913,7 +915,9 @@ class EybondHubOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         return self.async_show_menu(
             step_id="init",
-            menu_options=["devices", "rescan", "listener", "debug_panel"],
+            menu_options=[
+                "devices", "rescan", "listener", "debug_panel", "anomaly_log",
+            ],
         )
 
     async def async_step_debug_panel(self, user_input=None):
@@ -936,6 +940,32 @@ class EybondHubOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_DEBUG_PANEL,
                     default=opts.get(CONF_DEBUG_PANEL, DEFAULT_DEBUG_PANEL),
+                ): BooleanSelector(),
+            }),
+        )
+
+    async def async_step_anomaly_log(self, user_input=None):
+        """Toggle persisting anomalies to disk.
+
+        Separate from the debug panel on purpose. The panel is a live view and
+        only records while it is open; this keeps the rare events — rejections,
+        freezes, the raw bytes of a corrupt frame — for later, which is the
+        only time anyone actually looks for them.
+        """
+        opts = dict(self._config_entry.options)
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data=self._bumped_options(
+                    {CONF_ANOMALY_LOG: bool(user_input.get(CONF_ANOMALY_LOG, False))}
+                ),
+            )
+        return self.async_show_form(
+            step_id="anomaly_log",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_ANOMALY_LOG,
+                    default=opts.get(CONF_ANOMALY_LOG, DEFAULT_ANOMALY_LOG),
                 ): BooleanSelector(),
             }),
         )

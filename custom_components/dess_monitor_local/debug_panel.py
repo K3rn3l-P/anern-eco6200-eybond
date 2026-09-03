@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
     ENTRY_KIND_EYBOND_HUB,
 )
+from . import anomaly_log
 from .diagnostics import _coordinator_section
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,6 +76,50 @@ def _collect_state(hass: HomeAssistant) -> dict:
 @callback
 def _ws_state(hass, connection, msg):
     connection.send_result(msg["id"], _collect_state(hass))
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "dess_monitor_local/diag/anomalies"}
+)
+@websocket_api.async_response
+async def _ws_anomalies(hass, connection, msg):
+    """The persisted anomaly history, for the panel's Anomalies view.
+
+    Distinct from the subscribe stream above: that one is live and only exists
+    while a panel is open, this one is what was written to disk while nobody
+    was looking. Reading is done on the executor — the files grow with every
+    incident and this must not touch the event loop.
+    """
+    base = Path(hass.config.path(anomaly_log.FOLDER))
+
+    def _read() -> dict:
+        events = anomaly_log.read_events(base)
+        return {
+            "summary": anomaly_log.summarise(events),
+            "episodes": [
+                {"ts": ep[0].get("ts"), "events": ep}
+                for ep in reversed(anomaly_log.group_episodes(events))
+            ],
+            "dumps": anomaly_log.list_dumps(base),
+        }
+
+    connection.send_result(msg["id"], await hass.async_add_executor_job(_read))
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "dess_monitor_local/diag/anomaly_dump",
+    vol.Required("name"): str,
+})
+@websocket_api.async_response
+async def _ws_anomaly_dump(hass, connection, msg):
+    """One captured frame dump, by file name."""
+    base = Path(hass.config.path(anomaly_log.FOLDER))
+    connection.send_result(
+        msg["id"],
+        await hass.async_add_executor_job(
+            anomaly_log.read_dump, base, msg["name"]
+        ),
+    )
 
 
 @websocket_api.websocket_command(
@@ -185,6 +230,8 @@ async def _ensure_ws_registered(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, _ws_state)
     websocket_api.async_register_command(hass, _ws_subscribe)
     websocket_api.async_register_command(hass, _ws_send_frame)
+    websocket_api.async_register_command(hass, _ws_anomalies)
+    websocket_api.async_register_command(hass, _ws_anomaly_dump)
     js_path = Path(__file__).parent / "www" / "dess_debug_panel.js"
     await hass.http.async_register_static_paths(
         [StaticPathConfig(_STATIC_URL, str(js_path), False)]

@@ -11,6 +11,11 @@ change.
 The changes are hardware-specific and would not be right for every inverter the upstream
 project supports, which is why they live here rather than in a pull request.
 
+**Where this starts.** The fork branches from upstream `v1.1.0-beta.1` (`3f8c3cb`), which is the
+head of upstream `main`, and it also carries the debug panel from `v1.1.0-beta.2` (`6bff7a9`), a
+branch upstream has not merged into `main`. Both are pre-releases: there is no stable 1.1.0
+upstream, and `main` has not moved since 31 May 2026.
+
 ## What is different
 
 Full detail, per release, with the field measurements: **[CHANGELOG.md](CHANGELOG.md)**.

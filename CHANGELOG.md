@@ -9,6 +9,11 @@ estimates.
 
 Everything before `anern.1` is upstream history and is not listed here.
 
+**Where this fork starts.** It branches from upstream **`v1.1.0-beta.1`** (`3f8c3cb`), the head of
+upstream `main`, and its first commit also brings in the debug panel from **`v1.1.0-beta.2`**
+(`6bff7a9`), which sits on a branch upstream never merged into `main`. Both are pre-releases:
+upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
+
 ---
 
 ## v1.1.0-anern.6 — 2026-09-03
@@ -240,7 +245,9 @@ units.
 
 ### Also in this release
 
-- A `RAW` command in the debug panel: `RAW <devaddr> <devcode> <hex bytes…>` sends bytes straight
+- The debug panel from upstream's unmerged `v1.1.0-beta.2` branch, brought in with this commit:
+  `diag_hub.py` and the panel JavaScript unchanged, `debug_panel.py` adapted for this install.
+- A `RAW` command in that panel: `RAW <devaddr> <devcode> <hex bytes…>` sends bytes straight
   through the EyBond envelope, bypassing the protocol adapters. It is how the Modbus register above
   was found.
 - A pull request template pointing at the right base repository — GitHub defaults a fork's PR base

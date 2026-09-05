@@ -8,13 +8,17 @@ three problems that are one.
 """
 from __future__ import annotations
 
-from custom_components.dess_monitor_local.anomaly_log import (
+import pytest
+
+pytest.importorskip("homeassistant")
+
+from custom_components.dess_monitor_local.anomaly_log import (  # noqa: E402
     EPISODE_WINDOW_S,
     group_episodes,
     summarise,
 )
 
-from real_capture import REAL_CAPTURE
+from real_capture import REAL_CAPTURE  # noqa: E402
 
 EVENTS = [
     {"ts": offset, "kind": kind, "cmd": cmd}

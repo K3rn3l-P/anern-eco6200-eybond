@@ -18,8 +18,13 @@ import time
 
 import pytest
 
-from custom_components.dess_monitor_local import diag_hub
-from custom_components.dess_monitor_local.anomaly_log import purge, write_event
+pytest.importorskip("homeassistant")
+
+from custom_components.dess_monitor_local import diag_hub  # noqa: E402
+from custom_components.dess_monitor_local.anomaly_log import (  # noqa: E402
+    purge,
+    write_event,
+)
 
 
 @pytest.fixture(autouse=True)

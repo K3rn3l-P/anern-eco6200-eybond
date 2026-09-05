@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from ...const import PROTOCOL_PI18
+from ..crc import validate_voltronic_response
 from ..decoders.enums import ChargeSourcePrioritySetting
 from ..decoders.pi18 import decode_pi18_response
 from ..decoders.voltronic import decode_direct_response
@@ -11,7 +12,6 @@ from ..protocols.eybond_dongle import (
     send_eybond_set_command,
     send_eybond_voltronic,
 )
-from ..crc import validate_voltronic_response
 from ..protocols.modbus_rtu import build_write_single_frame, parse_write_response
 from .base import BaseAdapter
 

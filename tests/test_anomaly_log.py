@@ -95,7 +95,7 @@ class TestPersistence:
         files = list(tmp_path.glob("anomalies-*.jsonl"))
         assert len(files) == 1
         lines = files[0].read_text(encoding="utf-8").strip().splitlines()
-        assert [json.loads(l)["kind"] for l in lines] == ["freeze", "rejected"]
+        assert [json.loads(line)["kind"] for line in lines] == ["freeze", "rejected"]
 
 
 class TestPurge:

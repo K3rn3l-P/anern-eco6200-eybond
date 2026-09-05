@@ -21,7 +21,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant, callback
 
-from . import diag_hub, eybond_hub
+from . import anomaly_log, diag_hub, eybond_hub
 from .const import (
     CONF_DEBUG_PANEL,
     CONF_ENTRY_KIND,
@@ -29,7 +29,6 @@ from .const import (
     DOMAIN,
     ENTRY_KIND_EYBOND_HUB,
 )
-from . import anomaly_log
 from .diagnostics import _coordinator_section
 
 _LOGGER = logging.getLogger(__name__)

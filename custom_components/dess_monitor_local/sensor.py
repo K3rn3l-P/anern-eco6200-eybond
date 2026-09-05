@@ -29,7 +29,6 @@ from .sensors.direct_energy_sensors import (
     DirectPVEnergySensor,
 )
 
-
 _ANOMALY_SENSORS = "dess_monitor_local_anomaly_sensors_added"
 
 

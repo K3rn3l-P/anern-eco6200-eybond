@@ -73,5 +73,5 @@ class TestEntityWithItsOwnAttributes:
 
     def test_original_dict_is_not_mutated(self):
         e = _WithAttrs(_Coord(1))
-        e.extra_state_attributes
+        _ = e.extra_state_attributes  # reading the property is the whole point
         assert "stale" not in e._attr_extra_state_attributes

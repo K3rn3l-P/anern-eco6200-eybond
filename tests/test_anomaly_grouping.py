@@ -12,13 +12,13 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from real_capture import REAL_CAPTURE  # noqa: E402
+
 from custom_components.dess_monitor_local.anomaly_log import (  # noqa: E402
     EPISODE_WINDOW_S,
     group_episodes,
     summarise,
 )
-
-from real_capture import REAL_CAPTURE  # noqa: E402
 
 EVENTS = [
     {"ts": offset, "kind": kind, "cmd": cmd}

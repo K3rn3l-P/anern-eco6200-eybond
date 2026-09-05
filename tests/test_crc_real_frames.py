@@ -8,12 +8,11 @@ anything about their shape.
 from __future__ import annotations
 
 import pytest
+from real_frames import GOOD_FRAMES, TRUNCATED_FRAMES
 
 from custom_components.dess_monitor_local.api.crc import (
     validate_voltronic_response,
 )
-
-from real_frames import GOOD_FRAMES, TRUNCATED_FRAMES
 
 
 def _body(frame: bytes) -> bytes:

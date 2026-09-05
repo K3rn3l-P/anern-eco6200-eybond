@@ -18,7 +18,7 @@ the only question it exists for.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -147,7 +147,7 @@ class LastAnomalySensor(_AnomalyEntity):
     def _on_anomaly(self, event: dict) -> None:
         ts = event.get("ts")
         self._attr_native_value = (
-            datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
+            datetime.fromtimestamp(ts, tz=UTC) if ts else None
         )
         self._detail = {
             "kind": event.get("kind"),

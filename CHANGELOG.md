@@ -16,6 +16,30 @@ upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
 
 ---
 
+## v1.1.0-anern.7 — 2026-09-05
+
+**The `http` dependency the debug panel always needed.** The panel serves its JavaScript through
+`hass.http.async_register_static_paths`, but `manifest.json` declared no dependencies at all. On a
+running instance it works, because Home Assistant brings `http` up long before this integration's
+config entry: the ordering covers the call by accident, not by declaration. Change that ordering
+and `async_setup_entry` raises `AttributeError` on a `None` `hass.http`, and the integration does
+not load at all.
+
+It came in with the panel from `v1.1.0-beta.2`, whose manifest had no dependencies either.
+
+**Found by turning CI on for the first time.** Both `hassfest`
+(`Using component http but it's not in 'dependencies' or 'after_dependencies'`) and the four
+`test_setup_hass.py` failures were the same missing line seen from two sides: the test harness
+never sets `http` up, so `hass.http` is `None` there. With the dependency declared, the `hass` job
+goes from 4 failed / 47 passed to **51 passed**, and `hassfest` is green.
+
+Also in this release, and behaviour-neutral: `test_diag_hub.py` recovered from upstream's
+`v1.1.0-beta.2`, an `importorskip` guard on the two anomaly test modules so the pure-logic suite
+stops dying at collection when Home Assistant is absent, and the lint fixes that make the `lint`
+job pass (import order, `timezone.utc` written as the `UTC` alias, a stray blank line).
+
+---
+
 ## v1.1.0-anern.6 — 2026-09-03
 
 Diagnostics. Before this release three quarters of all failed reads left no trace at all, and the

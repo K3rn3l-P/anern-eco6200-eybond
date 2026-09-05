@@ -183,8 +183,9 @@ three modes work. The dongle turned out to be a plain serial passthrough: neithe
 ### The selects use the inverter's own names
 
 The generic PI30 names describe a different device. On this inverter register 0 is *Solar
-priority*, not "utility first" — that is what the app, the web portal and the cloud API all call
-it. Reading the old select told you the opposite of what the inverter was doing.
+priority*, not "utility first" — that is what the vendor's own tools call it: the SmartESS app,
+the [dessmonitor.com](https://www.dessmonitor.com) portal and the cloud API behind both. Reading
+the old select told you the opposite of what the inverter was doing.
 
 | register | upstream option | this fork |
 |---|---|---|

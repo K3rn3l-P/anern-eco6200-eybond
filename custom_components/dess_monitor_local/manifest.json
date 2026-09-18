@@ -17,6 +17,6 @@
     "pyserial-asyncio-fast==0.16"
   ],
   "ssdp": [],
-  "version": "1.1.0-anern.8",
+  "version": "1.1.0-anern.9",
   "zeroconf": []
 }

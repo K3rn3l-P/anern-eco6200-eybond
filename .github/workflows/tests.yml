@@ -70,3 +70,4 @@ jobs:
           python -m pytest -v -o addopts="-ra" -o asyncio_mode=auto
           tests/test_entities.py tests/test_setup_hass.py
           tests/test_adapters.py tests/test_config_flow.py
+          tests/test_eybond_adapter_crc.py

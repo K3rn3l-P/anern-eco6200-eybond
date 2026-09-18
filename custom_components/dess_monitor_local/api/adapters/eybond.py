@@ -56,6 +56,22 @@ class EyBondAdapter(BaseAdapter):
             # expects — passing the CR along makes every good frame fail.
             body, _, _ = response.partition(b"\r")
 
+            # A PI30 reply is "(<payload><CRC>". A body with no "(" anywhere is
+            # not one: it is another command's answer, or a fragment. The CRC
+            # does not catch it, because validate_voltronic_response only uses
+            # "(" to locate the frame and validates happily when the byte is
+            # missing altogether. Of 4012 archived frames, 11 have no "(" and
+            # 6 of those carry a valid CRC (D-98, D-104).
+            # Tested for anywhere rather than at position 0 so a gateway that
+            # prepends bytes cannot lose a good frame here. On this hardware it
+            # never happens: all 4001 framed captures start with "(".
+            if b"(" not in body:
+                _LOGGER.debug(
+                    "EyBond reply without a frame start for %s (%d bytes): %r",
+                    command, len(body), body[:120],
+                )
+                return {"error": "reply carries no frame start"}
+
             # The CRC check belongs here, not in the transport. send_eybond_bytes
             # is shared with Modbus (different CRC — it is the path that writes
             # the charger priority), with set commands, with PI18 and with the

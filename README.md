@@ -32,6 +32,7 @@ Full detail, per release, with the field measurements: **[CHANGELOG.md](CHANGELO
 | Select read-back names | The two priority sensors report the inverter's names, the ones from the Anern manual that the selects already use | `anern.8` |
 | Silent field loss | A short `QPIRI` and an unreadable `QMOD` are rejected instead of decoded into an `unknown` that no counter records | `anern.8` |
 | CRC bleed on QPIRI | The CRC byte that sticks to the last field is stripped, as the QPIGS status bits already were | `anern.8` |
+| Swapped replies | A body with no `(` is rejected for every command, not only where a decoder happened to notice | `anern.9` |
 
 ## Installation
 

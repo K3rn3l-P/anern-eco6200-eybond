@@ -16,6 +16,37 @@ upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
 
 ---
 
+## v1.1.0-anern.9 — 2026-09-18
+
+**A reply that carries no frame start is rejected, for every command.** A PI30 answer is
+`(<payload><CRC>`. A body with no `(` anywhere is not one: it belongs to another command, or it is
+a fragment. The CRC does not catch it, because `validate_voltronic_response` only uses `(` to
+locate the frame and validates happily when the byte is missing altogether.
+
+Of **4012 archived frames, 11 have no `(`, and 6 of those carry a valid CRC**. This is the one
+captured on the plant, and what each decoder made of it before this release:
+
+```
+230 01  000 00000 00000 02 1191 1194 0918 410 425 410 415 02 03t&
+```
+
+| command | before |
+|---|---|
+| QMOD, QPIGS, QPIWS, QPIRI | rejected, each by its own decoder's own check |
+| **QPIGS2** | **accepted**: three invented PV2 readings, because `decode_qpigs2` is a bare `zip` |
+| **QFWS** | **accepted** as a single `Raw` field |
+
+So the frame was caught only where a decoder happened to look, and the two that check nothing let
+it through as data. The check now sits in `EyBondAdapter.get_data`, once, before the CRC, so it
+covers every command and applies with strict CRC off too.
+
+It tests for `(` anywhere rather than at position 0, so a gateway that prepends bytes cannot lose a
+good frame here. On this hardware it never happens: all 4001 framed captures start with `(`.
+
+Also in this release: `tests/test_eybond_adapter_crc.py` now runs in CI. It needs Home Assistant,
+so the pure matrix skipped it, and the `hass` job listed four files by name and not this one, which
+left it running nowhere.
+
 ## v1.1.0-anern.8 — 2026-09-18
 
 **Read-back sensors now report the names the hardware uses.** `anern.1` renamed the *selects* to

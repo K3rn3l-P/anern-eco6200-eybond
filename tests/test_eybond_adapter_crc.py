@@ -31,6 +31,12 @@ TRUNCATED = (
 )
 
 
+# Captured on the plant: a reply that belongs to another command, intact, with
+# a valid CRC and no "(" to start the frame. The CRC cannot catch it, because
+# validate_voltronic_response only uses "(" to locate the frame. Six of these
+# among 4012 archived frames (D-98, D-104).
+SWAPPED = b"230 01  000 00000 00000 02 1191 1194 0918 410 425 410 415 02 03t&\r"
+
 @pytest.fixture
 def reply(monkeypatch):
     """Make the transport return a chosen frame, without touching the network."""
@@ -64,6 +70,28 @@ class TestStrictCrcOn:
     async def test_rejection_is_a_non_empty_dict(self, reply):
         reply(TRUNCATED)
         assert await EyBondAdapter(_URI, 30, strict_crc=True).get_data("QPIGS")
+
+
+class TestFrameStart:
+    @pytest.mark.asyncio
+    async def test_a_good_frame_still_decodes(self, reply):
+        reply(GOOD)
+        d = await EyBondAdapter(_URI, 30, strict_crc=True).get_data("QPIGS")
+        assert "error" not in d
+
+    @pytest.mark.asyncio
+    async def test_reply_without_a_frame_start_is_rejected(self, reply):
+        # The CRC does not catch this: the validator only uses "(" to find the
+        # frame and accepts a body that never had one.
+        reply(SWAPPED)
+        d = await EyBondAdapter(_URI, 30, strict_crc=True).get_data("QMOD")
+        assert d.get("error") == "reply carries no frame start"
+
+    @pytest.mark.asyncio
+    async def test_rejected_with_strict_crc_off_too(self, reply):
+        reply(SWAPPED)
+        d = await EyBondAdapter(_URI, 30, strict_crc=False).get_data("QMOD")
+        assert d.get("error") == "reply carries no frame start"
 
 
 class TestStrictCrcOff:

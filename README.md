@@ -29,8 +29,9 @@ Full detail, per release, with the field measurements: **[CHANGELOG.md](CHANGELO
 | Frame integrity | Strict CRC validation on **every** command, on by default, wired on the EyBond transport | `anern.6` |
 | Diagnostics | Failed reads are recorded instead of vanishing: JSONL on disk, captured frame bytes, seven counters as entities, an Anomalies view in the debug panel | `anern.6` |
 | Freshness | `stale` and `stale_cycles` on every typed sensor, because a frozen section otherwise looks perfectly fresh from outside | `anern.6` |
-| Select read-back names | The two priority sensors report the inverter's names, like the selects already did; on the charger the PI30 enum is off by one position | `anern.8` |
+| Select read-back names | The two priority sensors report the inverter's names, the ones from the Anern manual that the selects already use | `anern.8` |
 | Silent field loss | A short `QPIRI` and an unreadable `QMOD` are rejected instead of decoded into an `unknown` that no counter records | `anern.8` |
+| CRC bleed on QPIRI | The CRC byte that sticks to the last field is stripped, as the QPIGS status bits already were | `anern.8` |
 
 ## Installation
 

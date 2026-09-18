@@ -18,12 +18,11 @@ upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
 
 ## v1.1.0-anern.8 — 2026-09-18
 
-**Read-back sensors now report the names the hardware uses.** `anern.1` renamed the *selects*,
-because the generic PI30 names describe a different device; the two read-back sensors kept
-publishing the raw enum. On the charger the two vocabularies are off by one position — register 1
-reads `SolarFirst` on the sensor and *Solar and mains* on the select, which is a different charging
-mode — so a dashboard showing the sensor tells you the opposite of what the inverter is doing. It
-already produced one wrong diagnosis, on the night of 17 September 2026.
+**Read-back sensors now report the names the hardware uses.** `anern.1` renamed the *selects* to
+the names in the Anern manual; the two read-back sensors kept publishing the generic PI30 enum,
+which does not describe this inverter's modes. Register 1 is *Solar and mains* on the select and
+`SolarFirst` on the sensor, so the two disagree on every reading. It already produced one wrong
+diagnosis, on the night of 17 September 2026.
 
 It also blocks anything that verifies its own writes: an applier that sets a select and re-reads
 the sensor compares two vocabularies and sees disagreement that isn't there.

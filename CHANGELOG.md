@@ -41,10 +41,9 @@ comparison has to know where the cut falls.
 `stale: false` and nothing in the anomaly counters or the on-disk archive, because the read had
 succeeded and only the decoder knew something was wrong.
 
-- `decode_qpiri` zipped 28 field names against the values it got. A 27-field frame dropped the
-  last one, `reserved_ccc`. Measured on the live plant: **10 episodes between 15 and 18 September
-  2026**, the longest 368 minutes. Every QPIRI field has an entity, so the check now requires all
-  28; more fields than that is a firmware variant, not damage, and is still accepted.
+- `decode_qpiri` zipped 28 field names against the values it got, so a short frame dropped the
+  tail without a word. Every QPIRI field has an entity, so the check now requires all 28; more
+  fields than that is a firmware variant, not damage, and is still accepted.
 - `decode_qmod` read one character and turned anything outside `P/S/L/B/D/F` into the literal
   `"Unknown"`, which `DirectOperatingModeSensor` then published as `unknown`. QMOD carries a single
   character and has no length to check, so a reply belonging to another command passes the CRC and
@@ -55,9 +54,20 @@ Both now return an `error`, which is what `_is_rejected` already looks for: the 
 its last known data and the rejection is logged like any other. It is the rule the fork applies
 everywhere else — a freeze is a success, an `unknown` is a failure.
 
-Replayed over the archived frames: QPIRI keeps **311** accepted and newly rejects **10**, all of
-them single-token frames that passed the CRC and used to blank 27 entities at once. No archived
-QMOD frame changes verdict — the bad ones were never dumped, which is the invisibility this fixes.
+**And the CRC byte that sticks to the last QPIRI field.** The 2-byte CRC follows the last value
+with no separator, and `EyBondAdapter.get_data` decodes the body with `errors="ignore"`: a CRC byte
+that happens to be printable ASCII survives and stays glued to it. The frames end
+`... 10 44.0\x08\x9d`, so `reserved_ccc` reached the sensor as `"44.0\x08"`, `float()` raised, and
+the sensor published `unknown` with `stale: false` — the read had succeeded, so nothing recorded
+it. **6 of the 311 archived frames**, and it is what produced the **10 episodes between 15 and 18
+September 2026**, the longest 368 minutes. The QPIGS status bits get the same bleed and were
+already cleaned; QPIRI now is too.
+
+Replayed through `decode_direct_response`, the entry point the coordinator actually calls: of the
+311 archived QPIRI frames that pass the CRC, the 6 dirty ones now decode clean and **no frame
+changes verdict**. The length check catches nothing in the archive, because the short frames there
+fail the CRC first; it guards a path the CRC does not cover. No archived QMOD frame changes verdict
+either — the bad ones were never dumped, which is the invisibility this fixes.
 
 ## v1.1.0-anern.7 — 2026-09-05
 

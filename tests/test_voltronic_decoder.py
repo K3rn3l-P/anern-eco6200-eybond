@@ -148,6 +148,14 @@ class TestDecodeQpiri:
         assert "error" in d
         assert "reserved_ccc" not in d
 
+    def test_crc_byte_stuck_to_the_last_field_is_stripped(self):
+        # Real shape from the plant: the frame ends "... 10 44.0\x08\x9d", the
+        # non-ASCII CRC byte is dropped by errors="ignore" and \x08 stays glued
+        # to reserved_ccc, so float() raised and the sensor went unknown.
+        d = voltronic.decode_qpiri(self._QPIRI + "\x08")
+        assert d["reserved_ccc"] == "22.0"
+        assert float(d["reserved_ccc"]) == 22.0
+
     def test_extra_fields_are_ignored(self):
         # More fields is a firmware variant, not damage.
         d = voltronic.decode_qpiri(self._QPIRI + " 99")

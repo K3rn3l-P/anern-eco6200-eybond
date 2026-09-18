@@ -267,10 +267,25 @@ def decode_qpiri(ascii_str: str) -> dict:
             "error": f"QPIRI frame too short: {len(values)} of "
                      f"{_QPIRI_MIN_FIELDS} fields"
         }
-    return {
+    result = {
         name: transform_qpiri_value(i, value)
         for i, (name, value) in enumerate(zip(_QPIRI_FIELDS, values))
     }
+    # The 2-byte CRC sits right after the last field and EyBondAdapter decodes
+    # the body with errors="ignore", so a CRC byte that happens to be printable
+    # ASCII stays glued to it. reserved_ccc came out as "44.0\x08" on 6 of the
+    # 311 archived frames: float() raised on it and the sensor went `unknown`
+    # with stale=False, since the read itself had succeeded. Same bleed the
+    # QPIGS status bits get, handled the same way.
+    last = _QPIRI_FIELDS[-1]
+    if last in result:
+        result[last] = _strip_control(result[last])
+    return result
+
+
+def _strip_control(raw: str) -> str:
+    """Drop control bytes (CRC bleed) that stuck to a field."""
+    return "".join(c for c in (raw or "") if c >= " " and c != "\x7f")
 
 
 def decode_qmod(ascii_str: str) -> dict:

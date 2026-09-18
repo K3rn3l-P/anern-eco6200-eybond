@@ -250,8 +250,23 @@ def transform_qpiri_value(index: int, value: str) -> str:
         return value
 
 
+# Unlike QPIGS, every QPIRI field has a sensor in direct_sensor.py's
+# QPIRI_SENSOR_MAPPING, reserved_ccc included, so a frame one field short
+# blanks an entity. zip() drops the missing tail without a word: a 27-field
+# frame read as a successful, if incomplete, response, and reserved_ccc went
+# `unknown` with stale=False and nothing in the anomaly archive.
+# More fields than we know is a firmware variant, not damage: zip() keeps the
+# ones we know and ignores the extras.
+_QPIRI_MIN_FIELDS = len(_QPIRI_FIELDS)
+
+
 def decode_qpiri(ascii_str: str) -> dict:
     values = ascii_str.split()
+    if len(values) < _QPIRI_MIN_FIELDS:
+        return {
+            "error": f"QPIRI frame too short: {len(values)} of "
+                     f"{_QPIRI_MIN_FIELDS} fields"
+        }
     return {
         name: transform_qpiri_value(i, value)
         for i, (name, value) in enumerate(zip(_QPIRI_FIELDS, values))
@@ -259,11 +274,19 @@ def decode_qpiri(ascii_str: str) -> dict:
 
 
 def decode_qmod(ascii_str: str) -> dict:
+    # QMOD carries one character and has no length to check, so a reply that
+    # belongs to another command still passes the CRC and lands here. Returning
+    # the literal "Unknown" made DirectOperatingModeSensor publish `unknown`
+    # for a cycle: the engine reading operating_mode lost its regime witness,
+    # and neither the anomaly counters nor the on-disk archive recorded it,
+    # because the read had succeeded. An error instead lets _is_rejected see
+    # it, so the section freezes on the last known mode and the event is
+    # logged like any other rejection.
     code = ascii_str.strip()[:1]
     try:
         mode: Any = OperatingMode(code)
     except ValueError:
-        mode = "Unknown"
+        return {"error": f"QMOD unknown operating mode code {code!r}"}
     return {"operating_mode": mode}
 
 

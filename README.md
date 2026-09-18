@@ -29,6 +29,8 @@ Full detail, per release, with the field measurements: **[CHANGELOG.md](CHANGELO
 | Frame integrity | Strict CRC validation on **every** command, on by default, wired on the EyBond transport | `anern.6` |
 | Diagnostics | Failed reads are recorded instead of vanishing: JSONL on disk, captured frame bytes, seven counters as entities, an Anomalies view in the debug panel | `anern.6` |
 | Freshness | `stale` and `stale_cycles` on every typed sensor, because a frozen section otherwise looks perfectly fresh from outside | `anern.6` |
+| Select read-back names | The two priority sensors report the inverter's names, like the selects already did; on the charger the PI30 enum is off by one position | `anern.8` |
+| Silent field loss | A short `QPIRI` and an unreadable `QMOD` are rejected instead of decoded into an `unknown` that no counter records | `anern.8` |
 
 ## Installation
 
@@ -68,6 +70,11 @@ should use these:
 | 2 | `SolarAndUtility` | `Solar only` |
 
 Output priority changes one name for the same reason, `UtilityFirst` to `Utility`.
+
+⚠️ **From `anern.8` the two read-back sensors use the same table**, so
+`…_direct_charger_source_priority` and `…_direct_output_source_priority` report *Solar and mains*
+where they used to report `SolarFirst`. Recorder history keeps the old names: a comparison across
+the upgrade has to know where the cut falls.
 
 ## Debug panel
 

@@ -41,6 +41,10 @@ from custom_components.dess_monitor_local.sanity import (
     is_plausible_battery_voltage,
     is_plausible_power,
 )
+from custom_components.dess_monitor_local.select import (
+    CHARGER_PRIORITY_FROM_PI30,
+    OUTPUT_PRIORITY_FROM_PI30,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -248,12 +252,51 @@ class ACInputVoltageRangeSensor(DirectEnumSensorBase):
     enum_class = ACInputVoltageRange
 
 
-class OutputSourcePrioritySensor(DirectEnumSensorBase):
+class _PI30ReadBackSensor(DirectEnumSensorBase):
+    """Read-back sensor that reports the names the hardware uses.
+
+    The selects moved to the real names; these sensors kept publishing the
+    generic PI30 enum, and on the charger the two vocabularies are off by one
+    position: register 1 reads "SolarFirst" here and "Solar and mains" on the
+    select, which is a different charging mode. Anything comparing the two,
+    a dashboard or an applier verifying its own writes, sees disagreement that
+    isn't there.
+    See docs/impianto-solare/dess-local-select-nomi-e-readback.md
+
+    The translation lives on this subclass, not on DirectEnumSensorBase:
+    BatteryTypeSensor, ACInputVoltageRangeSensor and ParallelModeSensor
+    inherit from that base and keep their PI30 names.
+
+    `options` is translated together with the value. The base blanks a value
+    that isn't in `options`, so translating one without the other turns the
+    sensor off instead of renaming it.
+    """
+
+    #: PI30 enum name to the name this inverter uses. Each subclass brings its
+    #: own: "SolarFirst" is "Solar and mains" on the charger and "Solar" on the
+    #: output. A name with no entry is published unchanged.
+    translation: dict[str, str] = {}
+
+    @property
+    def options(self) -> list[str]:
+        return [self.translation.get(name, name) for name in super().options]
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        raw_value = self.data.get(self.data_section, {}).get(self.data_key)
+        value = self.translation.get(raw_value, raw_value)
+        self._attr_native_value = value if value in self.options else None
+        self.async_write_ha_state()
+
+
+class OutputSourcePrioritySensor(_PI30ReadBackSensor):
     enum_class = OutputSourcePriority
+    translation = OUTPUT_PRIORITY_FROM_PI30
 
 
-class ChargerSourcePrioritySensor(DirectEnumSensorBase):
+class ChargerSourcePrioritySensor(_PI30ReadBackSensor):
     enum_class = ChargerSourcePriority
+    translation = CHARGER_PRIORITY_FROM_PI30
 
 
 class ParallelModeSensor(DirectEnumSensorBase):

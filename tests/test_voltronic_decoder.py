@@ -117,9 +117,20 @@ class TestDecodeQmod:
         # operating_mode maps to the OperatingMode enum member.
         assert d["operating_mode"].name == "Line"
 
-    def test_unknown_mode(self):
+    def test_unknown_mode_is_rejected(self):
+        # A code outside P/S/L/B/D/F means the frame answers another command
+        # or is damaged. Reported as an error so the coordinator freezes on
+        # the last known mode; it used to publish `unknown` silently.
         d = voltronic.decode_qmod("Z")
-        assert d["operating_mode"] == "Unknown"
+        assert "error" in d
+        assert "operating_mode" not in d
+
+    def test_swapped_reply_is_rejected(self):
+        d = voltronic.decode_qmod("230.0 50.0")
+        assert "error" in d
+
+    def test_empty_body_is_rejected(self):
+        assert "error" in voltronic.decode_qmod("")
 
 
 class TestDecodeQpiri:
@@ -128,6 +139,20 @@ class TestDecodeQpiri:
         "230.0 18.2 230.0 50.0 18.2 4200 4200 24.0 24.5 24.0 28.4 27.2 "
         "2 002 100 1 2 1 1 01 0 0 27.0 0 1 24.5 10 22.0"
     )
+
+    def test_short_frame_is_rejected(self):
+        # zip() used to drop the missing tail without a word: a 27-field frame
+        # lost reserved_ccc and its sensor went `unknown` with stale=False and
+        # nothing in the anomaly archive.
+        d = voltronic.decode_qpiri(" ".join(self._QPIRI.split()[:-1]))
+        assert "error" in d
+        assert "reserved_ccc" not in d
+
+    def test_extra_fields_are_ignored(self):
+        # More fields is a firmware variant, not damage.
+        d = voltronic.decode_qpiri(self._QPIRI + " 99")
+        assert "error" not in d
+        assert d["reserved_ccc"] == "22.0"
 
     def test_enum_name_mapping(self):
         d = voltronic.decode_qpiri(self._QPIRI)

@@ -90,6 +90,65 @@ class TestOperatingModeSensor:
 
 
 # ---------------------------------------------------------------------------
+# Read-back priority sensors — the names the hardware uses, not the PI30 enum
+# ---------------------------------------------------------------------------
+class TestPI30ReadBack:
+    def _charger(self, raw):
+        return _make(ds.ChargerSourcePrioritySensor,
+                     {"qpiri": {"charger_source_priority": raw}},
+                     "qpiri", "charger_source_priority")
+
+    def _output(self, raw):
+        return _make(ds.OutputSourcePrioritySensor,
+                     {"qpiri": {"output_source_priority": raw}},
+                     "qpiri", "output_source_priority")
+
+    def test_charger_register_1_is_solar_and_mains(self):
+        # The one that misleads: PI30 calls register 1 "SolarFirst", the
+        # inverter charges from the mains there.
+        ent = self._charger("SolarFirst")
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value == "Solar and mains"
+
+    def test_charger_register_0_is_solar_priority(self):
+        ent = self._charger("UtilityFirst")
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value == "Solar priority"
+
+    def test_output_solar_first_is_solar(self):
+        # Same PI30 name, different meaning on the output register.
+        ent = self._output("SolarFirst")
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value == "Solar"
+
+    def test_options_translated_with_the_value(self):
+        # The base blanks a value missing from options, so an untranslated
+        # options list would turn the sensor off instead of renaming it.
+        ent = self._charger("SolarFirst")
+        assert "Solar and mains" in ent.options
+        assert "SolarFirst" not in ent.options
+
+    def test_name_without_a_mapping_passes_through(self):
+        ent = self._charger("OnlySolar")
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value == "OnlySolar"
+
+    def test_missing_field_is_none(self):
+        ent = self._charger(None)
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value is None
+
+    def test_translation_does_not_leak_to_the_base(self):
+        # BatteryTypeSensor shares DirectEnumSensorBase; a property on the
+        # base would rename it too.
+        ent = _make(ds.BatteryTypeSensor, {"qpiri": {"battery_type": "UserDefined"}},
+                    "qpiri", "battery_type")
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value == "UserDefined"
+        assert "UserDefined" in ent.options
+
+
+# ---------------------------------------------------------------------------
 # DirectInverterFaultSummarySensor — severity machine
 # ---------------------------------------------------------------------------
 class TestFaultSummary:

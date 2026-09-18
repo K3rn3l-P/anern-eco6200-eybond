@@ -16,6 +16,49 @@ upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
 
 ---
 
+## v1.1.0-anern.8 — 2026-09-18
+
+**Read-back sensors now report the names the hardware uses.** `anern.1` renamed the *selects*,
+because the generic PI30 names describe a different device; the two read-back sensors kept
+publishing the raw enum. On the charger the two vocabularies are off by one position — register 1
+reads `SolarFirst` on the sensor and *Solar and mains* on the select, which is a different charging
+mode — so a dashboard showing the sensor tells you the opposite of what the inverter is doing. It
+already produced one wrong diagnosis, on the night of 17 September 2026.
+
+It also blocks anything that verifies its own writes: an applier that sets a select and re-reads
+the sensor compares two vocabularies and sees disagreement that isn't there.
+
+The translation sits on the two subclasses, not on `DirectEnumSensorBase`, because
+`BatteryTypeSensor`, `ACInputVoltageRangeSensor` and `ParallelModeSensor` inherit from that base
+and keep their PI30 names. `options` is translated together with the value: the base blanks a value
+that isn't in `options`, so translating one without the other would turn the sensor off instead of
+renaming it. A name with no mapping is published unchanged.
+
+⚠️ **This changes published state.** Recorder history keeps the old names, so a historical
+comparison has to know where the cut falls.
+
+**Two decoders were losing a field in silence.** Both produced a sensor at `unknown` with
+`stale: false` and nothing in the anomaly counters or the on-disk archive, because the read had
+succeeded and only the decoder knew something was wrong.
+
+- `decode_qpiri` zipped 28 field names against the values it got. A 27-field frame dropped the
+  last one, `reserved_ccc`. Measured on the live plant: **10 episodes between 15 and 18 September
+  2026**, the longest 368 minutes. Every QPIRI field has an entity, so the check now requires all
+  28; more fields than that is a firmware variant, not damage, and is still accepted.
+- `decode_qmod` read one character and turned anything outside `P/S/L/B/D/F` into the literal
+  `"Unknown"`, which `DirectOperatingModeSensor` then published as `unknown`. QMOD carries a single
+  character and has no length to check, so a reply belonging to another command passes the CRC and
+  lands there intact. One episode of 2.1 minutes in ten days, and that sensor is the primary regime
+  witness for the solar engine reading it.
+
+Both now return an `error`, which is what `_is_rejected` already looks for: the section freezes on
+its last known data and the rejection is logged like any other. It is the rule the fork applies
+everywhere else — a freeze is a success, an `unknown` is a failure.
+
+Replayed over the archived frames: QPIRI keeps **311** accepted and newly rejects **10**, all of
+them single-token frames that passed the CRC and used to blank 27 entities at once. No archived
+QMOD frame changes verdict — the bad ones were never dumped, which is the invisibility this fixes.
+
 ## v1.1.0-anern.7 — 2026-09-05
 
 **The `http` dependency the debug panel always needed.** The panel serves its JavaScript through

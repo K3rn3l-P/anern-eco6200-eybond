@@ -833,9 +833,18 @@ class DirectInverterFaultSummarySensor(DirectSensorBase):
         qfws = self.data.get("qfws", {}) or {}
         # Prefer whichever is populated; if both, merge with PI18 fields
         # only adding non-overlapping warn_* keys.
-        merged = dict(qpiws)
+        merged = {k: v for k, v in qpiws.items() if k != "error"}
         for k, v in qfws.items():
-            merged.setdefault(k, v)
+            if k != "error":
+                merged.setdefault(k, v)
+        # An inverter answers one of the two commands and refuses the other,
+        # so one section is always just {"error": "NAK ..."}. That is not a
+        # fault to show next to good flags; it only matters when nothing
+        # else came back.
+        if not merged:
+            error = qpiws.get("error") or qfws.get("error")
+            if error:
+                merged["error"] = error
         return merged
 
     @callback

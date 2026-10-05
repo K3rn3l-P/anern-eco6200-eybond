@@ -187,6 +187,26 @@ class TestFaultSummary:
         ent._handle_coordinator_update()
         assert ent._attr_extra_state_attributes["active_count"] == 2
 
+    def test_refused_command_does_not_show_as_an_error(self):
+        # A PI30 inverter answers QPIWS and NAKs QFWS on every cycle.
+        nak = {"error": "NAK response received. Command not accepted."}
+        ent = self._make(qpiws={"overload": False}, qfws=nak)
+        ent._handle_coordinator_update()
+        assert ent._attr_native_value == "OK"
+        assert "error" not in ent._attr_extra_state_attributes
+
+    def test_refused_command_is_ignored_on_pi18_too(self):
+        nak = {"error": "NAK response received. Command not accepted."}
+        ent = self._make(qpiws=nak, qfws={"warn_pv_low_voltage": True})
+        ent._handle_coordinator_update()
+        assert "error" not in ent._attr_extra_state_attributes
+        assert ent._attr_extra_state_attributes["warn_pv_low_voltage"] is True
+
+    def test_error_stays_when_nothing_else_came_back(self):
+        nak = {"error": "NAK response received. Command not accepted."}
+        ent = self._make(qpiws={"error": "CRC mismatch"}, qfws=nak)
+        ent._handle_coordinator_update()
+        assert ent._attr_extra_state_attributes["error"] == "CRC mismatch"
 
 def _make_summary(data):
     ent = ds.DirectInverterFaultSummarySensor(_Dev(), _Coord(data))

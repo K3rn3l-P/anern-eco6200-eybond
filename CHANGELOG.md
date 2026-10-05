@@ -16,6 +16,40 @@ upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
 
 ---
 
+## v1.1.0-anern.10 — 2026-10-05
+
+**The CRC bytes are cut off by position, not by what they look like.** A PI30 answer is
+`(<payload><CRC>`, with nothing between the last field and the two CRC bytes. `anern.8` cleaned
+control bytes off the last field, which covers a CRC byte only when it is not printable. On
+18 September 2026 `reserved_ccc` reached its sensor as `44.0W`, `float()` raised and the sensor
+went `unknown` with `stale: false`.
+
+With strict CRC on, `EyBondAdapter.get_data` now decodes the payload that
+`validate_voltronic_response` already returns without the two bytes.
+
+Replayed on every frame archived on the plant, 2340 distinct ones across six commands, old decoding
+against new, field by field. Of the 2159 with a valid CRC:
+
+| command | valid frames | decoded differently | what changes |
+|---|---|---|---|
+| QPIGS | 2148 | 33 | a stray `reserved_a` disappears: it was the second CRC byte, left as a field of its own when the first one was whitespace |
+| QPIRI | 6 | 1 | `reserved_ccc` goes from `44.0&4` to `44.0` |
+| QPIWS, QPIGS2, QFWS, QMOD | 5 | 0 | nothing |
+
+The `(` is put back in front of the payload before decoding. Without it a QPIWS with no warning
+set, thirty-two zeros, reads as a hex dump to `decode_direct_response` and comes out as a frame
+with no status bits. The replay caught that before release, and there is a test on that frame.
+
+**The fault summary no longer shows a refused command as an error.** An inverter answers QPIWS or
+QFWS and refuses the other one on every cycle. The summary merged both sections, so it carried
+`error: NAK response received` as an attribute next to flags that were all clear. The error is now
+reported only when neither command returned a flag. The state and the flags were already right,
+and `any_warning` was not affected.
+
+Six new tests, three of them on frames captured on the plant.
+
+---
+
 ## v1.1.0-anern.9 — 2026-09-18
 
 **A reply that carries no frame start is rejected, for every command.** A PI30 answer is

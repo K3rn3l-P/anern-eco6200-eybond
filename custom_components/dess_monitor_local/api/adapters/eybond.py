@@ -78,7 +78,7 @@ class EyBondAdapter(BaseAdapter):
             # debug panel's manual send: validating there as Voltronic would
             # reject every Modbus reply.
             if self.strict_crc:
-                ok, _payload = validate_voltronic_response(body)
+                ok, payload = validate_voltronic_response(body)
                 if not ok:
                     # Reported as an error rather than {} so the coordinator
                     # logs the rejection, retries, and then freezes on the last
@@ -88,6 +88,13 @@ class EyBondAdapter(BaseAdapter):
                         command, len(body), body[:120],
                     )
                     return {"error": "CRC mismatch"}
+                # The two CRC bytes follow the last field with no separator, and
+                # a printable one sticks to it: "44.0" arrived as "44.0W" and the
+                # sensor went unknown (D-130). The validated payload already has
+                # them cut off by position, whatever the bytes are.
+                # The "(" goes back on: without it an all-digit payload, like a
+                # QPIWS with no warning set, reads as a hex dump to the decoder.
+                body = b"(" + payload
 
             ascii_resp = body.decode("ascii", errors="ignore")
             return decode_direct_response(command, ascii_resp) or {}

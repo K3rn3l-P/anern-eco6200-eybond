@@ -37,6 +37,21 @@ TRUNCATED = (
 # among 4012 archived frames (D-98, D-104).
 SWAPPED = b"230 01  000 00000 00000 02 1191 1194 0918 410 425 410 415 02 03t&\r"
 
+# Captured 2 Oct 2026: both CRC bytes are printable, so they stay glued to the
+# last field once the body is decoded as ASCII.
+PRINTABLE_CRC = (
+    b"(230.0 26.9 230.0 50.0 26.9 6200 6200 48.0 48.0 47.0 57.0 56.0 2 002 "
+    b"080 1 1 0 1 01 0 0 52.0 0 1 48.0 10 44.0&4\r"
+)
+# Captured 6 Sep 2026: the first CRC byte is a form feed, which splits like a
+# space and turns the second one into a field of its own.
+WHITESPACE_CRC = (
+    b"(241.6 49.9 229.6 49.8 0206 0125 003 400 52.20 007 050 0053 06.8 "
+    b"090.1 00.00 00000 00010110 00 00 00619 010\x0cY\r"
+)
+# No warning set: thirty-two zeros, which is also a valid hex dump.
+NO_WARNINGS = b"(00000000000000000000000000000000\xeb\xe4\r"
+
 @pytest.fixture
 def reply(monkeypatch):
     """Make the transport return a chosen frame, without touching the network."""
@@ -49,6 +64,28 @@ def reply(monkeypatch):
 
     return _set
 
+
+class TestCrcBytesAreCutByPosition:
+    @pytest.mark.asyncio
+    async def test_printable_crc_does_not_stick_to_the_last_field(self, reply):
+        reply(PRINTABLE_CRC)
+        d = await EyBondAdapter(_URI, 30, strict_crc=True).get_data("QPIRI")
+        assert "error" not in d
+        assert d["reserved_ccc"] == "44.0"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_crc_does_not_become_a_field(self, reply):
+        reply(WHITESPACE_CRC)
+        d = await EyBondAdapter(_URI, 30, strict_crc=True).get_data("QPIGS")
+        assert "error" not in d
+        assert "reserved_a" not in d
+
+    @pytest.mark.asyncio
+    async def test_all_zero_payload_is_not_read_as_a_hex_dump(self, reply):
+        reply(NO_WARNINGS)
+        d = await EyBondAdapter(_URI, 30, strict_crc=True).get_data("QPIWS")
+        assert "error" not in d
+        assert d["overload"] is False
 
 class TestStrictCrcOn:
     @pytest.mark.asyncio

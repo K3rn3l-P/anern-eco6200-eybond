@@ -16,6 +16,23 @@ upstream has no stable 1.1.0, and `main` has not moved since 31 May 2026.
 
 ---
 
+## v1.1.0-anern.11 — 2026-11-15
+
+**The announce also goes in unicast to the dongle's last known address.** On 15 November 2026 the
+router rebooted at 00:23 and from then on the dongle never received the broadcast
+`set>server=` again: it kept talking to the cloud and stayed off the local link for ten hours.
+The same announce sent in unicast to its address got `rsp>server=2;` and a session in 3 seconds.
+
+Every address a dongle connects from is remembered, at most four, newest last, and the announcer
+sends to each of them after the broadcast. The list is saved to
+`config/dess_monitor_local/eybond_peers.json`, because after a Home Assistant restart the dongle has
+to be reached before it has connected even once.
+
+Changing **Broadcast address** in the options is not a workaround: the field is part of the device
+URI, which is the prefix of every `unique_id`, so changing it creates a new copy of every entity.
+
+---
+
 ## v1.1.0-anern.10 — 2026-10-05
 
 **The CRC bytes are cut off by position, not by what they look like.** A PI30 answer is

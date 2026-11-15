@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -42,6 +43,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ...const import PROTOCOL_PI18
@@ -70,6 +72,15 @@ FC_FORWARD2DEVICE = 4
 DEFAULT_DEVCODE = 0x0994
 
 UDP_PORT = 58899
+# Addresses dongles have connected from, so the announce also goes to them in
+# unicast: after a router reboot on 15 Nov 2026 the dongle stopped receiving the
+# broadcast for ten hours while a unicast announce brought it back in 3 s.
+# Persisted because Home Assistant restarts and the dongle must be reached
+# before it has connected once. Newest last, capped.
+PEERS_FILE = "eybond_peers.json"
+MAX_KNOWN_PEERS = 4
+_known_peers: list[str] = []
+_peers_path: Path | None = None
 DEFAULT_BROADCAST = "255.255.255.255"
 DEFAULT_BIND_PORT = 8899
 
@@ -535,6 +546,10 @@ class EybondManager:
             duration, self.bind_host, self.bind_port,
         )
 
+    def _announce_targets(self) -> list[str]:
+        """The broadcast target, then every address a dongle connected from."""
+        return [self.broadcast] + [ip for ip in _known_peers if ip != self.broadcast]
+
     async def _announce_loop(self) -> None:
         if self.announce_ip:
             announce_ip = self.announce_ip
@@ -586,17 +601,18 @@ class EybondManager:
                     now = loop.time()
                     if now - last_send >= ANNOUNCE_INTERVAL:
                         last_send = now
-                        try:
-                            sock.sendto(payload, (self.broadcast, UDP_PORT))
-                            _LOGGER.debug(
-                                "EyBond: UDP -> %s:%d %r",
-                                self.broadcast, UDP_PORT, payload.decode(),
-                            )
-                        except OSError as err:
-                            _LOGGER.warning(
-                                "EyBond: UDP send failed (target %s:%d): %s",
-                                self.broadcast, UDP_PORT, err,
-                            )
+                        for target in self._announce_targets():
+                            try:
+                                sock.sendto(payload, (target, UDP_PORT))
+                                _LOGGER.debug(
+                                    "EyBond: UDP -> %s:%d %r",
+                                    target, UDP_PORT, payload.decode(),
+                                )
+                            except OSError as err:
+                                _LOGGER.warning(
+                                    "EyBond: UDP send failed (target %s:%d): %s",
+                                    target, UDP_PORT, err,
+                                )
                 elif not was_paused:
                     # Don't keep knocking connected dongles offline.
                     was_paused = True
@@ -629,6 +645,8 @@ class EybondManager:
         peer_str = f"{peer[0]}:{peer[1]}" if peer else "unknown"
         _LOGGER.debug("EyBond: dongle CONNECTED from %s", peer_str)
         connected_at = time.monotonic()
+        if peer:
+            _remember_peer(peer[0])
         if _diag():
             _diag_pub({"t": "session", "ev": "connect", "peer": peer_str})
 
@@ -909,6 +927,57 @@ class EybondManager:
             context or "frame", devaddr, len(raw),
         )
         return raw
+
+
+# ---------------------------------------------------------------------------
+# Known dongle addresses, persisted across restarts
+# ---------------------------------------------------------------------------
+def _read_peers(path: Path) -> list[str]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    peers = []
+    for ip in data:
+        try:
+            peers.append(str(ipaddress.IPv4Address(ip)))
+        except (ipaddress.AddressValueError, TypeError, ValueError):
+            continue
+    return peers[-MAX_KNOWN_PEERS:]
+
+
+def _write_peers(path: Path, peers: list[str]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(peers), encoding="utf-8")
+    except OSError as err:
+        _LOGGER.warning("EyBond: cannot save known dongle addresses to %s: %s", path, err)
+
+
+async def async_load_known_peers(folder: Path) -> None:
+    """Load the addresses saved by earlier runs; later connections are saved there."""
+    global _peers_path
+    _peers_path = folder / PEERS_FILE
+    peers = await asyncio.get_running_loop().run_in_executor(None, _read_peers, _peers_path)
+    for ip in peers:
+        if ip not in _known_peers:
+            _known_peers.append(ip)
+    del _known_peers[:-MAX_KNOWN_PEERS]
+
+
+def _remember_peer(ip: str) -> None:
+    if not ip or (_known_peers and _known_peers[-1] == ip):
+        return
+    if ip in _known_peers:
+        _known_peers.remove(ip)
+    _known_peers.append(ip)
+    del _known_peers[:-MAX_KNOWN_PEERS]
+    if _peers_path is not None:
+        asyncio.get_running_loop().run_in_executor(
+            None, _write_peers, _peers_path, list(_known_peers)
+        )
 
 
 # ---------------------------------------------------------------------------

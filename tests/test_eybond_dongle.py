@@ -589,3 +589,50 @@ class TestDiscoveryIntegration:
             await _drain(mgr, t1, t2)
 
         asyncio.run(scenario())
+
+
+class TestKnownPeers:
+    """The announce also goes in unicast to every address a dongle connected from: on 15 Nov 2026
+    the broadcast stopped reaching the dongle after a router reboot, and unicast brought it back."""
+
+    def setup_method(self):
+        ey._known_peers.clear()
+        ey._peers_path = None
+
+    teardown_method = setup_method
+
+    def test_a_connected_dongle_becomes_a_unicast_target(self):
+        async def scenario():
+            mgr = _new_manager()
+            assert mgr._announce_targets() == [ey.DEFAULT_BROADCAST]
+            r, w = _FakeReader(), _FakeWriter(("10.10.19.149", 50515))
+            task = asyncio.create_task(mgr._handle_session(r, w))
+            r.feed(_dongle_heartbeat("PN0000000001"))
+            await _until(lambda: mgr.connected)
+            assert mgr._announce_targets() == [ey.DEFAULT_BROADCAST, "10.10.19.149"]
+            await _drain(mgr, task)
+
+        asyncio.run(scenario())
+
+    def test_the_addresses_survive_a_restart(self, tmp_path):
+        async def scenario():
+            await ey.async_load_known_peers(tmp_path)
+            ey._remember_peer("10.10.19.149")
+            await asyncio.sleep(0.05)
+            ey._known_peers.clear()
+            await ey.async_load_known_peers(tmp_path)
+            assert ey._known_peers == ["10.10.19.149"]
+
+        asyncio.run(scenario())
+
+    def test_a_broken_file_loads_nothing(self, tmp_path):
+        (tmp_path / ey.PEERS_FILE).write_text("not json", encoding="utf-8")
+        asyncio.run(ey.async_load_known_peers(tmp_path))
+        assert ey._known_peers == []
+
+    def test_the_list_is_capped_and_keeps_the_newest(self):
+        for i in range(ey.MAX_KNOWN_PEERS + 2):
+            ey._remember_peer(f"10.0.0.{i}")
+        ey._remember_peer("10.0.0.2")
+        assert len(ey._known_peers) == ey.MAX_KNOWN_PEERS
+        assert ey._known_peers[-1] == "10.0.0.2"

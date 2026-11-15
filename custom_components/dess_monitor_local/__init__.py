@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from custom_components.dess_monitor_local import frame_log
 from custom_components.dess_monitor_local.api.commands.direct_command_queue import CommandQueue
 from custom_components.dess_monitor_local.api.protocols.eybond_dongle import (
+    async_load_known_peers,
     shutdown_all_eybond_managers,
 )
 from custom_components.dess_monitor_local.coordinators.direct_coordinator import DirectCoordinator
@@ -57,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HubConfigEntry) -> bool:
     # the panel above: re-evaluated on every setup so toggling the option and
     # reloading is enough.
     await _async_apply_anomaly_log(hass, entry)
+    await async_load_known_peers(Path(hass.config.path(anomaly_log.FOLDER)))
 
     if _entry_kind(entry) == ENTRY_KIND_EYBOND_HUB:
         # Hub entry: one listener, many PN-routed children built from the
